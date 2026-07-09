@@ -87,8 +87,9 @@ Commands:
 
 Notes:
   - This CLI is intended for AI agents playing Factorio headlessly (no visual UI).
-  - Actions that require the player to be near a target (build/mine/rotate/insert/extract/set-recipe)
-    are NOT instant. The server simulates walking time based on distance before the action completes.
+  - act-move physically walks the character and can fail with blocked=true.
+  - Other actions that require the player to be near a target currently still simulate walking time
+    before completing.
 
 Global options:
   --base <url> (default: FACTORIO_API_BASE or http://localhost:3000)
@@ -185,7 +186,7 @@ function usageForCommand(command: string | null) {
         "act-move: Move the player to target tile coordinates.\n" +
         "Usage: factorio act-move --target x,y [--target ...]\n" +
         "   or: factorio act-move --targets-json <json>\n" +
-        "Note: This action includes simulated walking time based on distance.\n"
+        "Note: This action physically walks the character and may return blocked=true if movement stalls.\n"
       );
     case "act-set-recipe":
       return (
