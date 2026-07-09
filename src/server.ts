@@ -2617,23 +2617,21 @@ async function handleApi(req: IncomingMessage, res: ServerResponse) {
     const targets: any[] = Array.isArray(body?.targets) ? body.targets : [];
     const limits = body?.limits || {};
     const max = clampInt(limits.max, AGENT_MAX_ACTIONS, 1, AGENT_MAX_ACTIONS);
-    const trimmed = targets
-      .slice(0, max)
-      .filter((t) => t?.x !== undefined && t?.y !== undefined);
+    const trimmed = targets.slice(0, max);
     try {
       const results: any[] = [];
       for (const target of trimmed) {
         results.push(
           await walkAgentToTarget({
-            x: target.x,
-            y: target.y,
+            x: target?.x,
+            y: target?.y,
           }),
         );
       }
       return json(res, 200, {
         ok: true,
         data: { results },
-        truncated: targets.length > trimmed.length,
+        truncated: targets.length > max,
       });
     } catch (err: any) {
       return json(res, 500, { error: err?.message || "RCON command failed" });
