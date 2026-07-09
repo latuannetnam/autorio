@@ -123,6 +123,19 @@ function distanceBetween(a: Point, b: Point): number {
   return Math.hypot(b.x - a.x, b.y - a.y);
 }
 
+function parseMovementCoordinate(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 function walkingDirection(from: Point, to: Point): number | null {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
@@ -1994,21 +2007,25 @@ async function stopAgentWalking(): Promise<void> {
   }
 }
 
-async function walkAgentToTarget(rawTarget: Point): Promise<WalkToTargetResult> {
-  const requested = { x: Number(rawTarget.x), y: Number(rawTarget.y) };
+async function walkAgentToTarget(
+  rawTarget: { x: unknown; y: unknown },
+): Promise<WalkToTargetResult> {
+  const parsedX = parseMovementCoordinate(rawTarget.x);
+  const parsedY = parseMovementCoordinate(rawTarget.y);
   const started = Date.now();
   let steps = 0;
   let position: Point | null = null;
 
-  if (!Number.isFinite(requested.x) || !Number.isFinite(requested.y)) {
+  if (parsedX === null || parsedY === null) {
+    const invalidTarget = { x: Number(rawTarget.x), y: Number(rawTarget.y) };
     return {
-      x: requested.x,
-      y: requested.y,
+      x: invalidTarget.x,
+      y: invalidTarget.y,
       ok: false,
       reached: false,
       blocked: false,
       position: null,
-      target: requested,
+      target: invalidTarget,
       distance_remaining: null,
       elapsed_ms: Date.now() - started,
       steps,
@@ -2016,6 +2033,7 @@ async function walkAgentToTarget(rawTarget: Point): Promise<WalkToTargetResult> 
     };
   }
 
+  const requested: Point = { x: parsedX, y: parsedY };
   const target = tileCenter(requested);
   let bestDistance = Number.POSITIVE_INFINITY;
   let bestProgressAt = started;
@@ -2607,8 +2625,8 @@ async function handleApi(req: IncomingMessage, res: ServerResponse) {
       for (const target of trimmed) {
         results.push(
           await walkAgentToTarget({
-            x: Number(target.x),
-            y: Number(target.y),
+            x: target.x,
+            y: target.y,
           }),
         );
       }
