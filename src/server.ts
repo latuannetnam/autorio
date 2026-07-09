@@ -1094,23 +1094,25 @@ function agentEntityProbeCommand(target: { x: number; y: number }): string {
   return parts.join(" ");
 }
 
-function agentMoveCommand(target: { x: number; y: number }): string {
+function agentSetWalkingCommand(direction: number): string {
   const parts = [
     "/sc",
-    "local s=game.surfaces[1]",
     "local player=game.players[1]",
     'if not player then rcon.print(\'{"ok":false,"error":"No player"}\') return end',
-    `local x=${target.x}`,
-    `local y=${target.y}`,
     "if not player.character then rcon.print('{\"ok\":false,\"error\":\"no_character\"}') return end",
-    "local safe_pos=s.find_non_colliding_position('character',{x=x,y=y},6,0.5)",
-    "if not safe_pos then rcon.print('{\"ok\":false,\"error\":\"no_path\"}') return end",
-    "player.teleport(safe_pos)",
-    "local out={}",
-    "table.insert(out,'\"ok\":true')",
-    "table.insert(out,'\"x\":'..safe_pos.x)",
-    "table.insert(out,'\"y\":'..safe_pos.y)",
-    "rcon.print('{'..table.concat(out,',')..'}')",
+    `player.walking_state={walking=true,direction=${direction}}`,
+    "rcon.print('{\"ok\":true}')",
+  ];
+  return parts.join(" ");
+}
+
+function agentStopWalkingCommand(): string {
+  const parts = [
+    "/sc",
+    "local player=game.players[1]",
+    'if not player then rcon.print(\'{"ok":false,"error":"No player"}\') return end',
+    "if player.character then player.walking_state={walking=false,direction=defines.direction.north} end",
+    "rcon.print('{\"ok\":true}')",
   ];
   return parts.join(" ");
 }
@@ -1957,6 +1959,175 @@ async function rconCommand(command: string): Promise<string> {
   return rconSendInternal(id, 2, command, 3000);
 }
 
+async function probeAgentPlayerPosition(): Promise<Point> {
+  const probeResponse = await rconCommand(agentPlayerPositionCommand());
+  const probe = parseRconJson<any>(
+    probeResponse,
+    "RCON probe returned invalid JSON",
+  );
+  if (probe?.error) {
+    throw new Error(probe.error);
+  }
+  const playerPos = probe?.player;
+  if (
+    !playerPos ||
+    !Number.isFinite(playerPos.x) ||
+    !Number.isFinite(playerPos.y)
+  ) {
+    throw new Error("probe_failed");
+  }
+  return { x: Number(playerPos.x), y: Number(playerPos.y) };
+}
+
+async function stopAgentWalking(): Promise<void> {
+  try {
+    const response = await rconCommand(agentStopWalkingCommand());
+    const data = parseRconJson<any>(
+      response,
+      "RCON stop walking returned invalid JSON",
+    );
+    if (data?.ok === false) {
+      throw new Error(data?.error || "stop_walking_failed");
+    }
+  } catch {
+    // Movement callers should return the original movement result when stopping fails.
+  }
+}
+
+async function walkAgentToTarget(rawTarget: Point): Promise<WalkToTargetResult> {
+  const requested = { x: Number(rawTarget.x), y: Number(rawTarget.y) };
+  const target = tileCenter(requested);
+  const started = Date.now();
+  let steps = 0;
+  let position: Point | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  let bestProgressAt = started;
+  const startPosition = await probeAgentPlayerPosition();
+  const expectedDistance = Number.isFinite(requested.x) && Number.isFinite(requested.y)
+    ? distanceBetween(startPosition, target)
+    : 0;
+  const timeoutMs = Math.max(
+    AGENT_MOVE_MIN_TIMEOUT_MS,
+    walkDelayMs(expectedDistance) + AGENT_MOVE_TIMEOUT_PADDING_MS,
+  );
+
+  try {
+    position = startPosition;
+    while (Date.now() - started <= timeoutMs) {
+      const distance = distanceBetween(position, target);
+      if (distance <= AGENT_MOVE_REACHED_DISTANCE) {
+        await stopAgentWalking();
+        return {
+          x: requested.x,
+          y: requested.y,
+          ok: true,
+          reached: true,
+          blocked: false,
+          position,
+          target,
+          distance_remaining: distance,
+          elapsed_ms: Date.now() - started,
+          steps,
+        };
+      }
+
+      if (distance < bestDistance - AGENT_MOVE_MIN_PROGRESS) {
+        bestDistance = distance;
+        bestProgressAt = Date.now();
+      } else if (Date.now() - bestProgressAt >= AGENT_MOVE_BLOCKED_WINDOW_MS) {
+        await stopAgentWalking();
+        return {
+          x: requested.x,
+          y: requested.y,
+          ok: false,
+          reached: false,
+          blocked: true,
+          position,
+          target,
+          distance_remaining: distance,
+          elapsed_ms: Date.now() - started,
+          steps,
+          error: "blocked",
+        };
+      }
+
+      const direction = walkingDirection(position, target);
+      if (direction === null) {
+        await stopAgentWalking();
+        return {
+          x: requested.x,
+          y: requested.y,
+          ok: true,
+          reached: true,
+          blocked: false,
+          position,
+          target,
+          distance_remaining: distance,
+          elapsed_ms: Date.now() - started,
+          steps,
+        };
+      }
+
+      const response = await rconCommand(agentSetWalkingCommand(direction));
+      const data = parseRconJson<any>(
+        response,
+        "RCON set walking returned invalid JSON",
+      );
+      if (!data || data.ok === false) {
+        await stopAgentWalking();
+        return {
+          x: requested.x,
+          y: requested.y,
+          ok: false,
+          reached: false,
+          blocked: false,
+          position,
+          target,
+          distance_remaining: distance,
+          elapsed_ms: Date.now() - started,
+          steps,
+          error: data?.error || "set_walking_failed",
+        };
+      }
+
+      steps += 1;
+      await new Promise((resolve) => setTimeout(resolve, AGENT_MOVE_POLL_MS));
+      position = await probeAgentPlayerPosition();
+    }
+
+    const distance = distanceBetween(position, target);
+    await stopAgentWalking();
+    return {
+      x: requested.x,
+      y: requested.y,
+      ok: false,
+      reached: false,
+      blocked: false,
+      position,
+      target,
+      distance_remaining: distance,
+      elapsed_ms: Date.now() - started,
+      steps,
+      error: "timeout",
+    };
+  } catch (err: any) {
+    await stopAgentWalking();
+    return {
+      x: requested.x,
+      y: requested.y,
+      ok: false,
+      reached: false,
+      blocked: false,
+      position,
+      target,
+      distance_remaining: position ? distanceBetween(position, target) : null,
+      elapsed_ms: Date.now() - started,
+      steps,
+      error: err?.message || "move_failed",
+    };
+  }
+}
+
 setInterval(() => {
   sampleUsage().catch(() => {});
 }, USAGE_SAMPLE_MS);
@@ -2418,64 +2589,12 @@ async function handleApi(req: IncomingMessage, res: ServerResponse) {
     try {
       const results: any[] = [];
       for (const target of trimmed) {
-        const probeResponse = await rconCommand(agentPlayerPositionCommand());
-        const probe = parseRconJson<any>(
-          probeResponse,
-          "RCON probe returned invalid JSON",
+        results.push(
+          await walkAgentToTarget({
+            x: Number(target.x),
+            y: Number(target.y),
+          }),
         );
-        if (probe?.error) {
-          results.push({
-            x: Number(target.x),
-            y: Number(target.y),
-            ok: false,
-            error: probe.error,
-          });
-          continue;
-        }
-        const playerPos = probe?.player;
-        if (
-          !playerPos ||
-          !Number.isFinite(playerPos.x) ||
-          !Number.isFinite(playerPos.y)
-        ) {
-          results.push({
-            x: Number(target.x),
-            y: Number(target.y),
-            ok: false,
-            error: "probe_failed",
-          });
-          continue;
-        }
-        const targetX = Number(target.x) + 0.5;
-        const targetY = Number(target.y) + 0.5;
-        const distance = Math.hypot(targetX - playerPos.x, targetY - playerPos.y);
-        const delayMs = walkDelayMs(distance);
-        if (delayMs > 0) {
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
-        }
-        const response = await rconCommand(
-          agentMoveCommand({ x: Number(target.x), y: Number(target.y) }),
-        );
-        const data = parseRconJson<any>(
-          response,
-          "RCON move returned invalid JSON",
-        );
-        if (!data || data.ok === false) {
-          results.push({
-            x: Number(target.x),
-            y: Number(target.y),
-            ok: false,
-            error: data?.error || "move_failed",
-          });
-        } else {
-          results.push({
-            x: Number(target.x),
-            y: Number(target.y),
-            ok: true,
-            moved_x: data?.x,
-            moved_y: data?.y,
-          });
-        }
       }
       return json(res, 200, {
         ok: true,
