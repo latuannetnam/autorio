@@ -1996,22 +1996,38 @@ async function stopAgentWalking(): Promise<void> {
 
 async function walkAgentToTarget(rawTarget: Point): Promise<WalkToTargetResult> {
   const requested = { x: Number(rawTarget.x), y: Number(rawTarget.y) };
-  const target = tileCenter(requested);
   const started = Date.now();
   let steps = 0;
   let position: Point | null = null;
+
+  if (!Number.isFinite(requested.x) || !Number.isFinite(requested.y)) {
+    return {
+      x: requested.x,
+      y: requested.y,
+      ok: false,
+      reached: false,
+      blocked: false,
+      position: null,
+      target: requested,
+      distance_remaining: null,
+      elapsed_ms: Date.now() - started,
+      steps,
+      error: "invalid_target",
+    };
+  }
+
+  const target = tileCenter(requested);
   let bestDistance = Number.POSITIVE_INFINITY;
   let bestProgressAt = started;
-  const startPosition = await probeAgentPlayerPosition();
-  const expectedDistance = Number.isFinite(requested.x) && Number.isFinite(requested.y)
-    ? distanceBetween(startPosition, target)
-    : 0;
-  const timeoutMs = Math.max(
-    AGENT_MOVE_MIN_TIMEOUT_MS,
-    walkDelayMs(expectedDistance) + AGENT_MOVE_TIMEOUT_PADDING_MS,
-  );
 
   try {
+    const startPosition = await probeAgentPlayerPosition();
+    const expectedDistance = distanceBetween(startPosition, target);
+    const timeoutMs = Math.max(
+      AGENT_MOVE_MIN_TIMEOUT_MS,
+      walkDelayMs(expectedDistance) + AGENT_MOVE_TIMEOUT_PADDING_MS,
+    );
+
     position = startPosition;
     while (Date.now() - started <= timeoutMs) {
       const distance = distanceBetween(position, target);
