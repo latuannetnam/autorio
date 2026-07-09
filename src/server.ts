@@ -5,7 +5,6 @@ import { promises as fs } from "fs";
 import path from "path";
 import net from "net";
 
-const PORT = 3000;
 const ROOT = process.cwd();
 
 function loadEnvFile() {
@@ -31,9 +30,32 @@ function loadEnvFile() {
 
 loadEnvFile();
 
-const FACTORIO_DIR = path.join(ROOT, "factorio");
-const SAVES_DIR = path.join(FACTORIO_DIR, "saves");
-const FACTORIO_BIN = path.join(FACTORIO_DIR, "bin", "x64", "factorio");
+const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
+
+function envPath(name: string, fallback: string) {
+  return process.env[name]?.trim() || fallback;
+}
+
+const FACTORIO_DIR = envPath("FACTORIO_DIR", path.join(ROOT, "factorio"));
+const SAVES_DIR = envPath("FACTORIO_SAVES_DIR", path.join(FACTORIO_DIR, "saves"));
+const FACTORIO_BIN = envPath(
+  "FACTORIO_BIN",
+  path.join(
+    FACTORIO_DIR,
+    "bin",
+    "x64",
+    process.platform === "win32" ? "factorio.exe" : "factorio",
+  ),
+);
+const FACTORIO_SERVER_SETTINGS = envPath(
+  "FACTORIO_SERVER_SETTINGS",
+  path.join(FACTORIO_DIR, "config", "server-settings.json"),
+);
+const FACTORIO_SERVER_ADMINLIST = envPath(
+  "FACTORIO_SERVER_ADMINLIST",
+  path.join(FACTORIO_DIR, "config", "server-adminlist.json"),
+);
+const FACTORIO_CONFIG = process.env.FACTORIO_CONFIG?.trim() || null;
 const PID_FILE = path.join(ROOT, "factorio.pid");
 
 const LOG_BUFFER_LIMIT = 500;
@@ -2993,17 +3015,10 @@ async function handleApi(req: IncomingMessage, res: ServerResponse) {
       return json(res, 400, { error: "Save not found" });
     }
 
-    const settingsPath = path.join(
-      FACTORIO_DIR,
-      "config",
-      "server-settings.json",
-    );
-    const adminlistPath = path.join(
-      FACTORIO_DIR,
-      "config",
-      "server-adminlist.json",
-    );
+    const settingsPath = FACTORIO_SERVER_SETTINGS;
+    const adminlistPath = FACTORIO_SERVER_ADMINLIST;
     const args = [
+      ...(FACTORIO_CONFIG ? ["--config", FACTORIO_CONFIG] : []),
       "--start-server",
       savePath,
       "--server-settings",

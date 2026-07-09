@@ -1,5 +1,33 @@
 #!/usr/bin/env node
 
+import fsSync from "fs";
+import path from "path";
+
+const ROOT = process.cwd();
+
+function loadEnvFile() {
+  const envPath = path.join(ROOT, ".env");
+  if (!fsSync.existsSync(envPath)) return;
+  const content = fsSync.readFileSync(envPath, "utf8");
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const idx = line.indexOf("=");
+    if (idx <= 0) continue;
+    const key = line.slice(0, idx).trim();
+    let value = line.slice(idx + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (process.env[key] === undefined) process.env[key] = value;
+  }
+}
+
+loadEnvFile();
+
 const DEFAULT_BASE = process.env.FACTORIO_API_BASE || "http://localhost:3000";
 
 type ResponseShape = {
