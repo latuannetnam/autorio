@@ -36,21 +36,23 @@ Always quote comma-separated coordinates and entity specs: `"-60,-49"`, `"burner
 
 ## Session Startup
 
-1. Check server/RCON:
+1. Verify connection using `.env` parameters:
+   - The agent CLI reads connection parameters from `.env` (like `FACTORIO_API_BASE`).
+   - Run `npm run agent -- server-status` to verify that the API server is running and the RCON connection to the Factorio server is successfully established (`"rcon": {"connected": true}`).
 
 ```powershell
 npm run agent -- server-status
 ```
 
-2. If no server is running, follow `README.md` to start API and Factorio.
-3. Check player and resources:
+2. If no API server is running, follow `README.md` to start the API and Factorio.
+3. Check player status and verify world data can be read successfully:
 
 ```powershell
 npm run agent -- observe-player -- --limit-inventory 80 --limit-equipment 10
-npm run agent -- observe-resources -- --window-x 0 --window-y 0 --radius 180
+npm run agent -- observe-world -- --window-x 0 --window-y 0 --radius 20 --include "tiles,entities"
 ```
 
-If `observe-player` returns `{ "error": "No player" }`, the human Factorio client has not joined yet. Ask them to connect to `127.0.0.1:34197`.
+If `observe-player` returns `{ "error": "No player" }`, the human Factorio client has not joined yet. Ask the human player to connect to the multiplayer server at `127.0.0.1:34197`.
 
 ## Playing Rules
 
