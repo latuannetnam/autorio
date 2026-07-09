@@ -76,6 +76,12 @@ const AGENT_MAX_RECIPES = 300;
 const AGENT_MAX_RESEARCH = 200;
 const AGENT_MAX_ACTIONS = 50;
 const CHARACTER_WALK_SPEED_TPS = 8.9;
+const AGENT_MOVE_POLL_MS = 150;
+const AGENT_MOVE_REACHED_DISTANCE = 0.25;
+const AGENT_MOVE_BLOCKED_WINDOW_MS = 900;
+const AGENT_MOVE_MIN_PROGRESS = 0.05;
+const AGENT_MOVE_TIMEOUT_PADDING_MS = 1500;
+const AGENT_MOVE_MIN_TIMEOUT_MS = 3000;
 
 function parseRconJson<T>(response: string, errorMessage: string): T {
   try {
@@ -88,6 +94,53 @@ function parseRconJson<T>(response: string, errorMessage: string): T {
 function walkDelayMs(distance: number) {
   if (!Number.isFinite(distance) || distance <= 0) return 0;
   return Math.max(0, Math.round((distance / CHARACTER_WALK_SPEED_TPS) * 1000));
+}
+
+type Point = { x: number; y: number };
+
+type WalkToTargetResult = {
+  x: number;
+  y: number;
+  ok: boolean;
+  reached: boolean;
+  blocked: boolean;
+  position: Point | null;
+  target: Point;
+  distance_remaining: number | null;
+  elapsed_ms: number;
+  steps: number;
+  error?: string;
+};
+
+function tileCenter(target: Point): Point {
+  return {
+    x: Number(target.x) + 0.5,
+    y: Number(target.y) + 0.5,
+  };
+}
+
+function distanceBetween(a: Point, b: Point): number {
+  return Math.hypot(b.x - a.x, b.y - a.y);
+}
+
+function walkingDirection(from: Point, to: Point): number | null {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  if (Math.hypot(dx, dy) <= AGENT_MOVE_REACHED_DISTANCE) return null;
+
+  const horizontal = Math.abs(dx) >= 0.15 ? Math.sign(dx) : 0;
+  const vertical = Math.abs(dy) >= 0.15 ? Math.sign(dy) : 0;
+
+  if (vertical < 0 && horizontal === 0) return 0;
+  if (vertical < 0 && horizontal > 0) return 2;
+  if (vertical === 0 && horizontal > 0) return 4;
+  if (vertical > 0 && horizontal > 0) return 6;
+  if (vertical > 0 && horizontal === 0) return 8;
+  if (vertical > 0 && horizontal < 0) return 10;
+  if (vertical === 0 && horizontal < 0) return 12;
+  if (vertical < 0 && horizontal < 0) return 14;
+
+  return null;
 }
 
 function readPidFile(): number | null {
