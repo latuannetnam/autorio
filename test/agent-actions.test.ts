@@ -4,10 +4,12 @@ import {
   AgentActionController,
   AsyncFifoLock,
   generateApproachCandidates,
+  miningCycleComplete,
   rotateBox,
   type ActionAdapter,
   type Box,
   type BuildRequest,
+  type MiningSnapshot,
 } from "../src/agent-actions.js";
 
 test("rotateBox rotates a rectangular footprint for east-facing placement", () => {
@@ -188,4 +190,86 @@ test("buildBatch continues after a missing item", async () => {
   ]);
   assert.equal(results[0].error, "missing_item");
   assert.equal(results[1].ok, true);
+});
+
+test("miningCycleComplete handles entity removal and one resource decrement", () => {
+  const furnace: MiningSnapshot = {
+    targetValid: true,
+    targetName: "stone-furnace",
+    targetType: "furnace",
+    unitNumber: 7,
+    amount: null,
+    progress: 0,
+    playerItemCount: 0,
+  };
+  assert.equal(miningCycleComplete(furnace, { ...furnace, targetValid: false }), true);
+  const ore: MiningSnapshot = {
+    targetValid: true,
+    targetName: "iron-ore",
+    targetType: "resource",
+    unitNumber: null,
+    amount: 1000,
+    progress: 0,
+    playerItemCount: 0,
+  };
+  assert.equal(miningCycleComplete(ore, { ...ore, amount: 999 }), true);
+  assert.equal(miningCycleComplete(ore, { ...ore, progress: 0.9 }), false);
+});
+
+test("mineBatch calls stopMining on adapter pulse failure", async () => {
+  let stopCount = 0;
+  const adapter = {
+    async probePlayer() {
+      return {
+        connected: true,
+        hasCharacter: true,
+        surface: 1,
+        controllerType: 1,
+        position: { x: 5, y: 5 },
+        reach: 5,
+      };
+    },
+    async isCharacterClear() {
+      return true;
+    },
+    async canReachEntity() {
+      return true;
+    },
+    async walkToPoint(target) {
+      return {
+        ok: true,
+        reached: true,
+        blocked: false,
+        position: target,
+        target,
+        distanceRemaining: 0,
+        elapsedMs: 1,
+        steps: 1,
+      };
+    },
+    async probeEntity() {
+      return {
+        requestedTile: { x: 0, y: 0 },
+        name: "iron-ore",
+        type: "resource",
+        unitNumber: null,
+        position: { x: 0.5, y: 0.5 },
+        box: { left: 0, top: 0, right: 1, bottom: 1 },
+        amount: 100,
+      };
+    },
+    async pulseMining() {
+      throw new Error("rcon_lost");
+    },
+    async stopMining() {
+      stopCount += 1;
+    },
+    async restoreSelection() {},
+  } as ActionAdapter;
+  const controller = new AgentActionController(adapter);
+  await assert.rejects(
+    controller.mineBatch([{ x: 0, y: 0 }]),
+    /rcon_lost/,
+  );
+  assert.equal(stopCount, 1);
 });

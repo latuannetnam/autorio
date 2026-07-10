@@ -4,7 +4,10 @@ import {
   buildCommand,
   entityProbeCommand,
   playerProbeCommand,
+  pulseMiningCommand,
+  stopMiningCommand,
 } from "../src/factorio-action-adapter.js";
+import type { EntityRef } from "../src/agent-actions.js";
 
 test("playerProbeCommand reports surface, controller, reach, and position", () => {
   const command = playerProbeCommand();
@@ -35,4 +38,22 @@ test("buildCommand performs one atomic cursor transaction", () => {
     "collision_box",
   ]) assert.match(command, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.doesNotMatch(command, /teleport|s\.create_entity/);
+});
+
+test("mining commands use timed character mining state", () => {
+  const sampleEntity: EntityRef = {
+    requestedTile: { x: 1, y: 2 },
+    name: "iron-ore",
+    type: "resource",
+    unitNumber: null,
+    position: { x: 1.5, y: 2.5 },
+    box: { left: 1, top: 2, right: 2, bottom: 3 },
+    amount: 1000,
+  };
+  const pulse = pulseMiningCommand(sampleEntity, "iron-ore");
+  assert.match(pulse, /update_selected_entity/);
+  assert.match(pulse, /mining_state/);
+  assert.match(pulse, /character_mining_progress/);
+  assert.doesNotMatch(pulse, /mine_entity|teleport/);
+  assert.match(stopMiningCommand(), /mining=false/);
 });

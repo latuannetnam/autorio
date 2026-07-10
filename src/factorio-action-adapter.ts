@@ -4,6 +4,7 @@ import type {
   BuildProbe,
   BuildRequest,
   EntityRef,
+  MiningSnapshot,
   PlayerSnapshot,
   Point,
   TilePoint,
@@ -322,6 +323,84 @@ export function buildCommand(request: BuildRequest): string {
   ].join("\n");
 }
 
+export function pulseMiningCommand(entity: EntityRef, itemName: string): string {
+  const name = luaString(entity.name);
+  const tx = luaNumber(entity.requestedTile.x);
+  const ty = luaNumber(entity.requestedTile.y);
+  const unit = entity.unitNumber === null
+    ? "nil"
+    : luaNumber(entity.unitNumber);
+  const item = luaString(itemName);
+  return [
+    "(function()",
+    "  local player = game.get_player(1) or (game.connected_players and game.connected_players[1])",
+    "  if not player or not player.character then",
+    "    rcon.print('{\"target_valid\":false,\"target_name\":\"\",\"target_type\":\"\",\"unit_number\":null,\"amount\":null,\"progress\":0,\"player_item_count\":0}')",
+    "    return",
+    "  end",
+    `  local target = {x = ${tx}, y = ${ty}}`,
+    `  local expected_name = ${name}`,
+    `  local expected_unit = ${unit}`,
+    `  local mining_item = ${item}`,
+    "  local surface = player.surface",
+    "  local function find_target()",
+    "    local ents = surface.find_entities_filtered{area={{target.x-0.5, target.y-0.5}, {target.x+0.5, target.y+0.5}}}",
+    "    for _, e in ipairs(ents) do",
+    "      if e.type ~= 'character' then return e end",
+    "    end",
+    "    return surface.get_entity(target)",
+    "  end",
+    "  local entity = find_target()",
+    "  if not entity then",
+    "    rcon.print('{\"target_valid\":false,\"target_name\":\"\",\"target_type\":\"\",\"unit_number\":null,\"amount\":null,\"progress\":0,\"player_item_count\":0}')",
+    "    return",
+    "  end",
+    "  if entity.name ~= expected_name then",
+    "    rcon.print('{\"target_valid\":false,\"target_name\":\"\",\"target_type\":\"\",\"unit_number\":null,\"amount\":null,\"progress\":0,\"player_item_count\":0}')",
+    "    return",
+    "  end",
+    "  if expected_unit and entity.unit_number ~= expected_unit then",
+    "    rcon.print('{\"target_valid\":false,\"target_name\":\"\",\"target_type\":\"\",\"unit_number\":null,\"amount\":null,\"progress\":0,\"player_item_count\":0}')",
+    "    return",
+    "  end",
+    "  player.update_selected_entity(entity.position)",
+    "  player.mining_state = {mining = true, position = entity.position}",
+    "  local progress = player.character_mining_progress or 0",
+    "  local amount = entity.amount",
+    "  local count = player.get_item_count(mining_item) or 0",
+    "  local data = string.format(",
+    "    '{\"target_valid\":true,\"target_name\":\"%s\",\"target_type\":\"%s\",\"unit_number\":%s,\"amount\":%s,\"progress\":%s,\"player_item_count\":%d}',",
+    "    entity.name, entity.type,",
+    "    entity.unit_number and tostring(entity.unit_number) or 'null',",
+    "    tostring(amount or ''),",
+    "    tostring(progress),",
+    "    count)",
+    "  rcon.print(data)",
+    "end)()",
+  ].join("\n");
+}
+
+export function stopMiningCommand(): string {
+  return [
+    "(function()",
+    "  local player = game.get_player(1) or (game.connected_players and game.connected_players[1])",
+    "  if not player then rcon.print('{}') return end",
+    "  player.mining_state = {mining=false}",
+    "  rcon.print('{\"mining\":false}')",
+    "end)()",
+  ].join("\n");
+}
+
+export function restoreSelectionCommand(): string {
+  return [
+    "(function()",
+    "  local player = game.get_player(1) or (game.connected_players and game.connected_players[1])",
+    "  if not player then rcon.print('{}') return end",
+    "  rcon.print('{\"selected\":false}')",
+    "end)()",
+  ].join("\n");
+}
+
 export function buildVerifyCommand(request: BuildRequest): string {
   const name = luaString(request.name);
   const x = luaNumber(request.x);
@@ -515,5 +594,42 @@ export class FactorioActionAdapter implements ActionAdapter {
       consumed: Number(raw.consumed ?? 0),
       cursorRestored: raw.cursor_restored === true,
     };
+  }
+
+  async pulseMining(entity: EntityRef, itemName: string): Promise<MiningSnapshot> {
+    let raw: any;
+    try {
+      raw = parseJson<any>(await this.execute(pulseMiningCommand(entity, itemName)));
+    } catch (err: any) {
+      throw new Error(`mining_pulse_failed: ${err?.message || err}`);
+    }
+    if (!raw || raw.target_valid !== true) {
+      return {
+        targetValid: false,
+        targetName: raw?.target_name || "",
+        targetType: raw?.target_type || "",
+        unitNumber: raw?.unit_number ?? null,
+        amount: raw?.amount ?? null,
+        progress: 0,
+        playerItemCount: 0,
+      };
+    }
+    return {
+      targetValid: true,
+      targetName: String(raw.target_name || ""),
+      targetType: String(raw.target_type || ""),
+      unitNumber: raw.unit_number ?? null,
+      amount: raw.amount === "" || raw.amount === null ? null : Number(raw.amount),
+      progress: Number(raw.progress || 0),
+      playerItemCount: Number(raw.player_item_count || 0),
+    };
+  }
+
+  async stopMining(): Promise<void> {
+    await this.execute(stopMiningCommand());
+  }
+
+  async restoreSelection(_entity: EntityRef | null): Promise<void> {
+    await this.execute(restoreSelectionCommand());
   }
 }

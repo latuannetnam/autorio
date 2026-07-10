@@ -800,136 +800,6 @@ function agentRecipesCommand(params: {
   return parts.join(" ");
 }
 
-function agentMineCommand(targets: Array<{ x: number; y: number }>): string {
-  const parts = [
-    "/sc",
-    "local s=game.surfaces[1]",
-    "local player=game.players[1]",
-    'if not player then rcon.print(\'{"error":"No player"}\') return end',
-    "local function esc(v)",
-    "if v==nil then return 'null' end",
-    "local t=type(v)",
-    'if t==\"string\" then',
-    "return '\"'..v:gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
-    'elseif t==\"number\" or t==\"boolean\" then',
-    "return tostring(v)",
-    "else",
-    "return '\"'..tostring(v):gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
-    "end",
-    "end",
-    "local results={}",
-    "local function find_entity(x,y)",
-    "local ents=s.find_entities_filtered{position={x,y}} or {}",
-    "if #ents > 0 then return ents[1] end",
-    "local area={{x-0.5,y-0.5},{x+0.5,y+0.5}}",
-    "ents=s.find_entities_filtered{area=area} or {}",
-    "for i=1,#ents do",
-    "local cand=ents[i]",
-    "if cand and cand.valid and cand.minable then return cand end",
-    "end",
-    "return nil",
-    "end",
-    "local function ensure_reach(entity)",
-    "if not player.character then return false,'no_character' end",
-    "if player.can_reach_entity and player.can_reach_entity(entity) then return true end",
-    "local target_pos=entity.position",
-    "local safe_pos=s.find_non_colliding_position('character', target_pos, 6, 0.5)",
-    "if safe_pos then",
-    "player.teleport(safe_pos)",
-    "end",
-    "if player.can_reach_entity and player.can_reach_entity(entity) then return true end",
-    "return false,'out_of_reach'",
-    "end",
-    "local function estimate_mined_count(entity)",
-    "local props=entity.prototype and entity.prototype.mineable_properties or nil",
-    "local total=0",
-    "if props and props.products then",
-    "for _,prod in pairs(props.products) do",
-    "local amt=prod.amount",
-    "if not amt then",
-    "if prod.amount_min and prod.amount_max then amt=(prod.amount_min+prod.amount_max)/2 end",
-    "if not amt and prod.amount_min then amt=prod.amount_min end",
-    "if not amt and prod.amount_max then amt=prod.amount_max end",
-    "end",
-    "if not amt then amt=1 end",
-    "total=total+amt",
-    "end",
-    "end",
-    "if total <= 0 then total = 1 end",
-    "return total",
-    "end",
-    "local function mine(x,y)",
-    "local e=find_entity(x,y)",
-    "if not e then return {x=x,y=y,ok=false,error='no_entity'} end",
-    "local ename=e.name",
-    "if not e.minable then return {x=x,y=y,name=ename,ok=false,error='not_minable'} end",
-    "local can_reach,reach_err=ensure_reach(e)",
-    "if not can_reach then return {x=x,y=y,name=ename,ok=false,error=reach_err or 'out_of_reach'} end",
-    "local mined_count=estimate_mined_count(e)",
-    "local ok,err=pcall(function() player.mine_entity(e) end)",
-    "if ok then return {x=x,y=y,name=ename,ok=true,mined_count=mined_count} end",
-    "return {x=x,y=y,name=ename,ok=false,error=tostring(err)}",
-    "end",
-  ];
-  for (const target of targets) {
-    parts.push(`table.insert(results,mine(${target.x},${target.y}))`);
-  }
-  parts.push(
-    "local out={}",
-    "for i=1,#results do",
-    "local r=results[i]",
-    "local entry='{\"x\":'..r.x..',\"y\":'..r.y..',\"ok\":'..tostring(r.ok)",
-    "if r.name then entry=entry..',\"name\":'..esc(r.name) end",
-    "if r.error then entry=entry..',\"error\":'..esc(r.error) end",
-    "entry=entry..'}'",
-    "table.insert(out,entry)",
-    "end",
-    "local results_json='['..table.concat(out,',')..']'",
-    "rcon.print('{\"results\":'..results_json..'}')",
-  );
-  return parts.join(" ");
-}
-
-function agentMineProbeCommand(target: { x: number; y: number }): string {
-  const parts = [
-    "/sc",
-    "local s=game.surfaces[1]",
-    "local player=game.players[1]",
-    'if not player then rcon.print(\'{"error":"No player"}\') return end',
-    "local function esc(v)",
-    "if v==nil then return 'null' end",
-    "local t=type(v)",
-    'if t==\"string\" then',
-    "return '\"'..v:gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
-    'elseif t==\"number\" or t==\"boolean\" then',
-    "return tostring(v)",
-    "else",
-    "return '\"'..tostring(v):gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
-    "end",
-    "end",
-    "local function find_entity(x,y)",
-    "local ents=s.find_entities_filtered{position={x,y}} or {}",
-    "if #ents > 0 then return ents[1] end",
-    "local area={{x-0.5,y-0.5},{x+0.5,y+0.5}}",
-    "ents=s.find_entities_filtered{area=area} or {}",
-    "for i=1,#ents do",
-    "local cand=ents[i]",
-    "if cand and cand.valid and cand.minable then return cand end",
-    "end",
-    "return nil",
-    "end",
-    `local target_x=${target.x}`,
-    `local target_y=${target.y}`,
-    "local e=find_entity(target_x,target_y)",
-    "if not e then rcon.print('{\"error\":\"no_entity\"}') return end",
-    "local out={}",
-    "table.insert(out,'\"player\":{\"x\":'..esc(player.position.x)..',\"y\":'..esc(player.position.y)..'}')",
-    "table.insert(out,'\"entity\":{\"name\":'..esc(e.name)..',\"x\":'..esc(e.position.x)..',\"y\":'..esc(e.position.y)..',\"minable\":'..esc(e.minable)..'}')",
-    "rcon.print('{'..table.concat(out,',')..'}')",
-  ];
-  return parts.join(" ");
-}
-
 function agentPlayerPositionCommand(): string {
   const parts = [
     "/sc",
@@ -949,9 +819,9 @@ function agentEntityProbeCommand(target: { x: number; y: number }): string {
     "local function esc(v)",
     "if v==nil then return 'null' end",
     "local t=type(v)",
-    'if t==\"string\" then',
+    'if t=="string" then',
     "return '\"'..v:gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
-    'elseif t==\"number\" or t==\"boolean\" then',
+    'elseif t=="number" or t=="boolean" then',
     "return tostring(v)",
     "else",
     "return '\"'..tostring(v):gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
@@ -2374,78 +2244,9 @@ async function handleApi(req: IncomingMessage, res: ServerResponse) {
       .slice(0, max)
       .filter((t) => t?.x !== undefined && t?.y !== undefined);
     try {
-      const results: any[] = [];
-      for (const target of trimmed) {
-        const probeResponse = await rconCommand(
-          agentMineProbeCommand({ x: Number(target.x), y: Number(target.y) }),
-        );
-        const probe = parseRconJson<any>(
-          probeResponse,
-          "RCON probe returned invalid JSON",
-        );
-        if (probe?.error) {
-          results.push({
-            x: Number(target.x),
-            y: Number(target.y),
-            ok: false,
-            error: probe.error,
-          });
-          continue;
-        }
-        const playerPos = probe?.player;
-        const entityPos = probe?.entity;
-        if (
-          !playerPos ||
-          !entityPos ||
-          !Number.isFinite(playerPos.x) ||
-          !Number.isFinite(playerPos.y) ||
-          !Number.isFinite(entityPos.x) ||
-          !Number.isFinite(entityPos.y)
-        ) {
-          results.push({
-            x: Number(target.x),
-            y: Number(target.y),
-            ok: false,
-            error: "probe_failed",
-          });
-          continue;
-        }
-        const dx = entityPos.x - playerPos.x;
-        const dy = entityPos.y - playerPos.y;
-        const distance = Math.hypot(dx, dy);
-        const delayMs = walkDelayMs(distance);
-        if (delayMs > 0) {
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
-        }
-        const response = await rconCommand(
-          agentMineCommand([{ x: Number(target.x), y: Number(target.y) }]),
-        );
-        const data = parseRconJson<any>(
-          response,
-          "RCON mine returned invalid JSON",
-        );
-        const entry = data?.results?.[0];
-        if (!entry) {
-          results.push({
-            x: Number(target.x),
-            y: Number(target.y),
-            ok: false,
-            error: "mine_failed",
-          });
-        } else {
-          results.push(entry);
-          if (entry?.ok) {
-            const minedCountRaw = Number(entry?.mined_count);
-            const minedCount = Number.isFinite(minedCountRaw)
-              ? Math.max(1, Math.ceil(minedCountRaw))
-              : 1;
-            const postDelayMs = minedCount * 2000;
-            if (postDelayMs > 0) {
-              await new Promise((resolve) => setTimeout(resolve, postDelayMs));
-            }
-          }
-        }
-      }
+      const results = await actionController.mineBatch(
+        trimmed.map((t) => ({ x: Number(t.x), y: Number(t.y) })),
+      );
       return json(res, 200, {
         ok: true,
         data: { results },
