@@ -73,3 +73,46 @@ test("moveTiles converts public tile coordinates and shares the FIFO lock", asyn
   assert.deepEqual(events, ["walk:2.5,3.5", "action"]);
 });
 
+test("approachEntity tries the next clear candidate after a block", async () => {
+  let walks = 0;
+  const adapter = movementAdapter([]) as ActionAdapter;
+  adapter.probePlayer = async () => ({
+    connected: true,
+    hasCharacter: true,
+    surface: 1,
+    controllerType: 1,
+    position: { x: 5, y: 0 },
+    reach: 3,
+  });
+  adapter.isCharacterClear = async () => true;
+  adapter.canReachEntity = async () => walks === 2;
+  adapter.walkToPoint = async (target) => {
+    walks += 1;
+    return {
+      ok: walks === 2,
+      reached: walks === 2,
+      blocked: walks === 1,
+      position: target,
+      target,
+      distanceRemaining: walks === 1 ? 1 : 0,
+      elapsedMs: 1,
+      steps: 1,
+      error: walks === 1 ? "blocked" : undefined,
+    };
+  };
+  const controller = new AgentActionController(adapter);
+  const result = await controller.runExclusive(() =>
+    controller.approachEntity({
+      requestedTile: { x: 0, y: 0 },
+      name: "stone-furnace",
+      type: "furnace",
+      unitNumber: 10,
+      position: { x: 0.5, y: 0.5 },
+      box: { left: -0.5, top: -0.5, right: 1.5, bottom: 1.5 },
+      amount: null,
+    }),
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.attempts.length, 2);
+  assert.deepEqual(result.chosen, result.attempts[1].candidate);
+});

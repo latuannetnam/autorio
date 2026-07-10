@@ -6,9 +6,9 @@ import path from "path";
 import net from "net";
 import {
   AgentActionController,
-  type ActionAdapter,
   type WalkResult,
 } from "./agent-actions.js";
+import { FactorioActionAdapter } from "./factorio-action-adapter.js";
 
 const ROOT = process.cwd();
 
@@ -2191,13 +2191,12 @@ function mapWalkResult(result: WalkToTargetResult): WalkResult {
   };
 }
 
-const movementAdapter: ActionAdapter = {
-  async walkToPoint(target) {
-    return mapWalkResult(await walkAgentToPoint(target));
-  },
-};
+const factorioActionAdapter = new FactorioActionAdapter(
+  rconCommand,
+  async (target) => mapWalkResult(await walkAgentToPoint(target)),
+);
 
-const actionController = new AgentActionController(movementAdapter);
+const actionController = new AgentActionController(factorioActionAdapter);
 
 setInterval(() => {
   sampleUsage().catch(() => {});

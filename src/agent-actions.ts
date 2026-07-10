@@ -118,8 +118,33 @@ export function generateApproachCandidates(input: {
   );
 }
 
+export type PlayerSnapshot = {
+  connected: boolean;
+  hasCharacter: boolean;
+  surface: number;
+  controllerType: number;
+  position: Point;
+  reach: number;
+};
+
+export type BuildProbe = {
+  requestedTile: TilePoint;
+  name: string;
+  direction: number;
+  footprint: Box;
+  itemCount: number;
+  surfacePlaceable: boolean;
+  error?: ActionError;
+};
+
 export interface ActionAdapter {
   walkToPoint(target: Point): Promise<WalkResult>;
+  probePlayer(): Promise<PlayerSnapshot>;
+  probeEntity(target: TilePoint): Promise<EntityRef | null>;
+  probeBuild(input: { name: string; x: number; y: number; direction: number }): Promise<BuildProbe>;
+  isCharacterClear(point: Point): Promise<boolean>;
+  canReachEntity(entity: EntityRef): Promise<boolean>;
+  canReachBuild(probe: BuildProbe): Promise<boolean>;
 }
 
 export class AgentActionController {
@@ -141,5 +166,78 @@ export class AgentActionController {
       }
       return results;
     });
+  }
+
+  async approachEntity(entity: EntityRef): Promise<ApproachResult> {
+    const player = await this.adapter.probePlayer();
+    if (!player.connected || !player.hasCharacter) {
+      return { ok: false, position: null, chosen: null, attempts: [], error: "no_character" };
+    }
+    const candidates = generateApproachCandidates({
+      player: player.position,
+      box: entity.box,
+      reach: player.reach,
+      clearance: 0.4,
+    });
+    const attempts: CandidateAttempt[] = [];
+    for (const candidate of candidates) {
+      if (!(await this.adapter.isCharacterClear(candidate))) continue;
+      const movement = await this.adapter.walkToPoint(candidate);
+      if (!movement.ok) {
+        attempts.push({ candidate, movement, reachable: false, error: "blocked" });
+        continue;
+      }
+      const reachable = await this.adapter.canReachEntity(entity);
+      attempts.push({
+        candidate,
+        movement,
+        reachable,
+        error: reachable ? undefined : "out_of_reach",
+      });
+      if (reachable) {
+        return { ok: true, position: movement.position, chosen: candidate, attempts };
+      }
+    }
+    return {
+      ok: false,
+      position: attempts.at(-1)?.movement.position ?? player.position,
+      chosen: null,
+      attempts,
+      error: attempts.some((attempt) => attempt.error === "out_of_reach")
+        ? "out_of_reach"
+        : "blocked",
+    };
+  }
+
+  async approachBuild(probe: BuildProbe): Promise<ApproachResult> {
+    const player = await this.adapter.probePlayer();
+    if (!player.connected || !player.hasCharacter) {
+      return { ok: false, position: null, chosen: null, attempts: [], error: "no_character" };
+    }
+    const candidates = generateApproachCandidates({
+      player: player.position,
+      box: probe.footprint,
+      reach: player.reach,
+      clearance: 0.4,
+    });
+    const attempts: CandidateAttempt[] = [];
+    for (const candidate of candidates) {
+      if (!(await this.adapter.isCharacterClear(candidate))) continue;
+      const movement = await this.adapter.walkToPoint(candidate);
+      if (!movement.ok) {
+        attempts.push({ candidate, movement, reachable: false, error: "blocked" });
+        continue;
+      }
+      const reachable = await this.adapter.canReachBuild(probe);
+      attempts.push({ candidate, movement, reachable, error: reachable ? undefined : "out_of_reach" });
+      if (reachable) return { ok: true, position: movement.position, chosen: candidate, attempts };
+    }
+    return {
+      ok: false,
+      position: attempts.at(-1)?.movement.position ?? player.position,
+      chosen: null,
+      attempts,
+      error: attempts.some((attempt) => attempt.error === "out_of_reach") ? "out_of_reach" : "blocked",
+    };
   }
 }
