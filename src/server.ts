@@ -2347,69 +2347,9 @@ async function handleApi(req: IncomingMessage, res: ServerResponse) {
       .slice(0, max)
       .filter((t) => t?.x !== undefined && t?.y !== undefined);
     try {
-      const results: any[] = [];
-      for (const target of trimmed) {
-        const probeResponse = await rconCommand(
-          agentEntityProbeCommand({ x: Number(target.x), y: Number(target.y) }),
-        );
-        const probe = parseRconJson<any>(
-          probeResponse,
-          "RCON probe returned invalid JSON",
-        );
-        if (probe?.error) {
-          results.push({
-            x: Number(target.x),
-            y: Number(target.y),
-            ok: false,
-            error: probe.error,
-          });
-          continue;
-        }
-        const playerPos = probe?.player;
-        const entityPos = probe?.entity;
-        if (
-          !playerPos ||
-          !entityPos ||
-          !Number.isFinite(playerPos.x) ||
-          !Number.isFinite(playerPos.y) ||
-          !Number.isFinite(entityPos.x) ||
-          !Number.isFinite(entityPos.y)
-        ) {
-          results.push({
-            x: Number(target.x),
-            y: Number(target.y),
-            ok: false,
-            error: "probe_failed",
-          });
-          continue;
-        }
-        const distance = Math.hypot(
-          entityPos.x - playerPos.x,
-          entityPos.y - playerPos.y,
-        );
-        const delayMs = walkDelayMs(distance);
-        if (delayMs > 0) {
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
-        }
-        const response = await rconCommand(
-          agentRotateCommand([{ x: Number(target.x), y: Number(target.y) }]),
-        );
-        const data = parseRconJson<any>(
-          response,
-          "RCON rotate returned invalid JSON",
-        );
-        const entry = data?.results?.[0];
-        if (!entry) {
-          results.push({
-            x: Number(target.x),
-            y: Number(target.y),
-            ok: false,
-            error: "rotate_failed",
-          });
-        } else {
-          results.push(entry);
-        }
-      }
+      const results = await actionController.rotateBatch(
+        trimmed.map((t) => ({ x: Number(t.x), y: Number(t.y) })),
+      );
       return json(res, 200, {
         ok: true,
         data: { results },
@@ -2440,71 +2380,12 @@ async function handleApi(req: IncomingMessage, res: ServerResponse) {
       .slice(0, max)
       .filter((t) => t?.x !== undefined && t?.y !== undefined && t?.recipe);
     try {
-      const results: any[] = [];
-      for (const target of trimmed) {
-        const probeResponse = await rconCommand(
-          agentEntityProbeCommand({ x: Number(target.x), y: Number(target.y) }),
-        );
-        const probe = parseRconJson<any>(
-          probeResponse,
-          "RCON probe returned invalid JSON",
-        );
-        if (probe?.error) {
-          results.push({
-            x: Number(target.x),
-            y: Number(target.y),
-            ok: false,
-            error: probe.error,
-          });
-          continue;
-        }
-        const playerPos = probe?.player;
-        const entityPos = probe?.entity;
-        if (
-          !playerPos ||
-          !entityPos ||
-          !Number.isFinite(playerPos.x) ||
-          !Number.isFinite(playerPos.y) ||
-          !Number.isFinite(entityPos.x) ||
-          !Number.isFinite(entityPos.y)
-        ) {
-          results.push({
-            x: Number(target.x),
-            y: Number(target.y),
-            ok: false,
-            error: "probe_failed",
-          });
-          continue;
-        }
-        const distance = Math.hypot(
-          entityPos.x - playerPos.x,
-          entityPos.y - playerPos.y,
-        );
-        const delayMs = walkDelayMs(distance);
-        if (delayMs > 0) {
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
-        }
-        const response = await rconCommand(
-          agentSetRecipeCommand([
-            { x: Number(target.x), y: Number(target.y), recipe: target.recipe },
-          ]),
-        );
-        const data = parseRconJson<any>(
-          response,
-          "RCON set-recipe returned invalid JSON",
-        );
-        const entry = data?.results?.[0];
-        if (!entry) {
-          results.push({
-            x: Number(target.x),
-            y: Number(target.y),
-            ok: false,
-            error: "set_recipe_failed",
-          });
-        } else {
-          results.push(entry);
-        }
-      }
+      const results = await actionController.setRecipeBatch(
+        trimmed.map((t) => ({
+          tile: { x: Number(t.x), y: Number(t.y) },
+          recipe: String(t.recipe),
+        })),
+      );
       return json(res, 200, {
         ok: true,
         data: { results },

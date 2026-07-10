@@ -7,6 +7,8 @@ import type {
   MiningSnapshot,
   PlayerSnapshot,
   Point,
+  RecipeOperationResult,
+  RotateOperationResult,
   TilePoint,
   WalkResult,
 } from "./agent-actions.js";
@@ -401,6 +403,116 @@ export function restoreSelectionCommand(): string {
   ].join("\n");
 }
 
+export function rotateCommand(entity: EntityRef): string {
+  const name = luaString(entity.name);
+  const tx = luaNumber(entity.requestedTile.x);
+  const ty = luaNumber(entity.requestedTile.y);
+  const unit = entity.unitNumber === null
+    ? "nil"
+    : luaNumber(entity.unitNumber);
+  return [
+    "(function()",
+    "  local player = game.get_player(1) or (game.connected_players and game.connected_players[1])",
+    "  if not player or not player.character then",
+    "    rcon.print('{\"ok\":false,\"before\":0,\"after\":0,\"error\":\"no_character\"}')",
+    "    return",
+    "  end",
+    `  local target = {x = ${tx}, y = ${ty}}`,
+    `  local expected_name = ${name}`,
+    `  local expected_unit = ${unit}`,
+    "  local surface = player.surface",
+    "  local function find_entity()",
+    "    local ents = surface.find_entities_filtered{area={{target.x-0.5, target.y-0.5}, {target.x+0.5, target.y+0.5}}}",
+    "    for _, e in ipairs(ents) do",
+    "      if e.type ~= 'character' then return e end",
+    "    end",
+    "    return surface.get_entity(target)",
+    "  end",
+    "  local e = find_entity()",
+    "  if not e then",
+    "    rcon.print('{\"ok\":false,\"before\":0,\"after\":0,\"error\":\"no_entity\"}')",
+    "    return",
+    "  end",
+    "  if e.name ~= expected_name then",
+    "    rcon.print('{\"ok\":false,\"before\":0,\"after\":0,\"error\":\"invalid_target\"}')",
+    "    return",
+    "  end",
+    "  if expected_unit and e.unit_number ~= expected_unit then",
+    "    rcon.print('{\"ok\":false,\"before\":0,\"after\":0,\"error\":\"invalid_target\"}')",
+    "    return",
+    "  end",
+    "  if not player.can_reach_entity(e) then",
+    "    rcon.print('{\"ok\":false,\"before\":e.direction or 0,\"after\":e.direction or 0,\"error\":\"out_of_reach\"}')",
+    "    return",
+    "  end",
+    "  local before = e.direction or 0",
+    "  e.rotate{by_player = player}",
+    "  local after = e.direction or 0",
+    "  rcon.print(string.format('{\"ok\":true,\"before\":%d,\"after\":%d}', before, after))",
+    "end)()",
+  ].join("\n");
+}
+
+export function setRecipeCommand(entity: EntityRef, recipe: string): string {
+  const name = luaString(entity.name);
+  const recipeName = luaString(recipe);
+  const tx = luaNumber(entity.requestedTile.x);
+  const ty = luaNumber(entity.requestedTile.y);
+  const unit = entity.unitNumber === null
+    ? "nil"
+    : luaNumber(entity.unitNumber);
+  return [
+    "(function()",
+    "  local player = game.get_player(1) or (game.connected_players and game.connected_players[1])",
+    "  if not player or not player.character then",
+    "    rcon.print('{\"ok\":false,\"requested\":\"' .. ${recipeName} .. '\",\"before\":null,\"after\":null,\"error\":\"no_character\"}')",
+    "    return",
+    "  end",
+    `  local target = {x = ${tx}, y = ${ty}}`,
+    `  local expected_name = ${name}`,
+    `  local expected_unit = ${unit}`,
+    "  local surface = player.surface",
+    "  local function find_entity()",
+    "    local ents = surface.find_entities_filtered{area={{target.x-0.5, target.y-0.5}, {target.x+0.5, target.y+0.5}}}",
+    "    for _, e in ipairs(ents) do",
+    "      if e.type ~= 'character' then return e end",
+    "    end",
+    "    return surface.get_entity(target)",
+    "  end",
+    "  local e = find_entity()",
+    "  if not e then",
+    "    rcon.print('{\"ok\":false,\"requested\":\"' .. ${recipeName} .. '\",\"before\":null,\"after\":null,\"error\":\"no_entity\"}')",
+    "    return",
+    "  end",
+    "  if e.name ~= expected_name then",
+    "    rcon.print('{\"ok\":false,\"requested\":\"' .. ${recipeName} .. '\",\"before\":null,\"after\":null,\"error\":\"invalid_target\"}')",
+    "    return",
+    "  end",
+    "  if expected_unit and e.unit_number ~= expected_unit then",
+    "    rcon.print('{\"ok\":false,\"requested\":\"' .. ${recipeName} .. '\",\"before\":null,\"after\":null,\"error\":\"invalid_target\"}')",
+    "    return",
+    "  end",
+    "  if not player.can_reach_entity(e) then",
+    "    rcon.print('{\"ok\":false,\"requested\":\"' .. ${recipeName} .. '\",\"before\":null,\"after\":null,\"error\":\"out_of_reach\"}')",
+    "    return",
+    "  end",
+    "  if not e.set_recipe then",
+    "    rcon.print('{\"ok\":false,\"requested\":\"' .. ${recipeName} .. '\",\"before\":null,\"after\":null,\"error\":\"invalid_recipe\"}')",
+    "    return",
+    "  end",
+    "  local before = e.recipe and e.recipe.name or nil",
+    "  local ok = e.set_recipe(${recipeName})",
+    "  if not ok then",
+    "    rcon.print('{\"ok\":false,\"requested\":\"' .. ${recipeName} .. '\",\"before\":\"' .. (before or '') .. '\",\"after\":null,\"error\":\"invalid_recipe\"}')",
+    "    return",
+    "  end",
+    "  local after = e.recipe and e.recipe.name or nil",
+    "  local data = string.format('{\"ok\":true,\"requested\":%s,\"before\":%s,\"after\":%s}', ${recipeName}, before and ('\"' .. before .. '\"') or 'null', after and ('\"' .. after .. '\"') or 'null')",
+    "  rcon.print(data)",
+    "end)()",
+  ].join("\n");
+}
+
 export function buildVerifyCommand(request: BuildRequest): string {
   const name = luaString(request.name);
   const x = luaNumber(request.x);
@@ -631,5 +743,41 @@ export class FactorioActionAdapter implements ActionAdapter {
 
   async restoreSelection(_entity: EntityRef | null): Promise<void> {
     await this.execute(restoreSelectionCommand());
+  }
+
+  async rotate(entity: EntityRef): Promise<RotateOperationResult> {
+    const raw = parseJson<any>(await this.execute(rotateCommand(entity)));
+    if (!raw || raw.ok !== true) {
+      return {
+        ok: false,
+        before: Number(raw?.before ?? 0),
+        after: Number(raw?.after ?? 0),
+        error: raw?.error || "verification_failed",
+      };
+    }
+    return {
+      ok: true,
+      before: Number(raw.before ?? 0),
+      after: Number(raw.after ?? 0),
+    };
+  }
+
+  async setRecipe(entity: EntityRef, recipe: string): Promise<RecipeOperationResult> {
+    const raw = parseJson<any>(await this.execute(setRecipeCommand(entity, recipe)));
+    if (!raw || raw.ok !== true) {
+      return {
+        ok: false,
+        requested: recipe,
+        before: raw?.before ?? null,
+        after: raw?.after ?? null,
+        error: raw?.error || "verification_failed",
+      };
+    }
+    return {
+      ok: true,
+      requested: recipe,
+      before: raw.before ?? null,
+      after: raw.after ?? null,
+    };
   }
 }

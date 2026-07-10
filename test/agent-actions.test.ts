@@ -6,6 +6,8 @@ import {
   generateApproachCandidates,
   miningCycleComplete,
   rotateBox,
+  verifyRecipe,
+  verifyRotation,
   type ActionAdapter,
   type Box,
   type BuildRequest,
@@ -273,3 +275,43 @@ test("mineBatch calls stopMining on adapter pulse failure", async () => {
   );
   assert.equal(stopCount, 1);
 });
+
+test("rotate result requires a direction change", () => {
+  assert.equal(verifyRotation({ ok: true, before: 0, after: 4 }).ok, true);
+  assert.equal(
+    verifyRotation({ ok: true, before: 0, after: 0 }).error,
+    "verification_failed",
+  );
+});
+
+test("recipe result requires exact readback", () => {
+  assert.equal(
+    verifyRecipe({
+      ok: true,
+      requested: "iron-gear-wheel",
+      before: null,
+      after: "iron-gear-wheel",
+    }).ok,
+    true,
+  );
+  assert.equal(
+    verifyRecipe({
+      ok: true,
+      requested: "iron-gear-wheel",
+      before: null,
+      after: null,
+    }).error,
+    "verification_failed",
+  );
+  assert.equal(
+    verifyRecipe({
+      ok: false,
+      requested: "missing",
+      before: null,
+      after: null,
+      error: "invalid_recipe",
+    }).error,
+    "invalid_recipe",
+  );
+});
+

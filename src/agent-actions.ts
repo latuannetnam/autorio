@@ -170,6 +170,31 @@ export type MiningResult = {
   detail?: string;
 };
 
+export type RotateOperationResult = {
+  ok: boolean;
+  before: number;
+  after: number;
+  error?: ActionError;
+};
+
+export type RecipeOperationResult = {
+  ok: boolean;
+  requested: string;
+  before: string | null;
+  after: string | null;
+  error?: ActionError;
+};
+
+export function verifyRotation(result: RotateOperationResult): RotateOperationResult {
+  if (!result.ok || result.before !== result.after) return result;
+  return { ...result, ok: false, error: "verification_failed" };
+}
+
+export function verifyRecipe(result: RecipeOperationResult): RecipeOperationResult {
+  if (!result.ok || result.requested === result.after) return result;
+  return { ...result, ok: false, error: "verification_failed" };
+}
+
 export function miningCycleComplete(
   initial: MiningSnapshot,
   current: MiningSnapshot,
@@ -198,6 +223,8 @@ export interface ActionAdapter {
   pulseMining(entity: EntityRef, itemName: string): Promise<MiningSnapshot>;
   stopMining(): Promise<void>;
   restoreSelection(entity: EntityRef | null): Promise<void>;
+  rotate(entity: EntityRef): Promise<RotateOperationResult>;
+  setRecipe(entity: EntityRef, recipe: string): Promise<RecipeOperationResult>;
 }
 
 export class AgentActionController {
@@ -407,5 +434,76 @@ export class AgentActionController {
         // ignore cleanup failure
       }
     }
+  }
+
+  async rotateBatch(targets: TilePoint[]): Promise<RotateOperationResult[]> {
+    return this.runExclusive(async () => {
+      const results: RotateOperationResult[] = [];
+      for (const target of targets) {
+        results.push(await this.runOneRotate(target));
+      }
+      return results;
+    });
+  }
+
+  private async runOneRotate(target: TilePoint): Promise<RotateOperationResult> {
+    const entity = await this.adapter.probeEntity(target);
+    if (!entity) return { ok: false, before: 0, after: 0, error: "no_entity" };
+    if (entity.type === "character") return { ok: false, before: 0, after: 0, error: "not_minable" };
+    const approach = await this.approachEntity(entity);
+    if (!approach.ok) {
+      return {
+        ok: false,
+        before: 0,
+        after: 0,
+        error: approach.error ?? "out_of_reach",
+      };
+    }
+    const result = await this.adapter.rotate(entity);
+    return verifyRotation({ ...result });
+  }
+
+  async setRecipeBatch(targets: Array<{ tile: TilePoint; recipe: string }>): Promise<RecipeOperationResult[]> {
+    return this.runExclusive(async () => {
+      const results: RecipeOperationResult[] = [];
+      for (const target of targets) {
+        results.push(await this.runOneRecipe(target.tile, target.recipe));
+      }
+      return results;
+    });
+  }
+
+  private async runOneRecipe(target: TilePoint, recipe: string): Promise<RecipeOperationResult> {
+    const entity = await this.adapter.probeEntity(target);
+    if (!entity) {
+      return {
+        ok: false,
+        requested: recipe,
+        before: null,
+        after: null,
+        error: "no_entity",
+      };
+    }
+    if (entity.type === "character") {
+      return {
+        ok: false,
+        requested: recipe,
+        before: null,
+        after: null,
+        error: "invalid_recipe",
+      };
+    }
+    const approach = await this.approachEntity(entity);
+    if (!approach.ok) {
+      return {
+        ok: false,
+        requested: recipe,
+        before: null,
+        after: null,
+        error: approach.error ?? "out_of_reach",
+      };
+    }
+    const result = await this.adapter.setRecipe(entity, recipe);
+    return verifyRecipe({ ...result });
   }
 }
