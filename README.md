@@ -70,12 +70,12 @@ Always verify mutations with `observe-entity` or `observe-player` before proceed
 
 ```dotenv
 PORT=3100
-FACTORIO_BIN=E:\Games\Factorio\bin\x64\factorio.exe
-FACTORIO_DIR=D:\latuan\Programming\autorio\factorio
-FACTORIO_SAVES_DIR=D:\latuan\Programming\autorio\factorio\saves
-FACTORIO_SERVER_SETTINGS=D:\latuan\Programming\autorio\factorio\config\server-settings.json
-FACTORIO_SERVER_ADMINLIST=D:\latuan\Programming\autorio\factorio\config\server-adminlist.json
-FACTORIO_CONFIG=D:\latuan\Programming\autorio\factorio\config\config.ini
+FACTORIO_BIN=\Games\Factorio\bin\x64\factorio.exe
+FACTORIO_DIR=\autorio\factorio
+FACTORIO_SAVES_DIR=\autorio\factorio\saves
+FACTORIO_SERVER_SETTINGS=\autorio\factorio\config\server-settings.json
+FACTORIO_SERVER_ADMINLIST=\autorio\factorio\config\server-adminlist.json
+FACTORIO_CONFIG=\autorio\factorio\config\config.ini
 RCON_HOST=127.0.0.1
 RCON_PORT=27015
 RCON_PASSWORD=codex-rcon-local
