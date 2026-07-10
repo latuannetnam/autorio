@@ -88,8 +88,8 @@ Commands:
 Notes:
   - This CLI is intended for AI agents playing Factorio headlessly (no visual UI).
   - act-move physically walks the character and can fail with blocked=true.
-  - Other actions that require the player to be near a target currently still simulate walking time
-    before completing.
+  - All target actions physically walk the character into reach before performing the Factorio action.
+    Results may include blocked or out_of_reach diagnostics and continue per-target on failure.
 
 Global options:
   --base <url> (default: FACTORIO_API_BASE or http://localhost:3000)
@@ -164,14 +164,14 @@ function usageForCommand(command: string | null) {
         "Usage: factorio act-build --entity name,x,y,dir [--entity ...]\n" +
         "   or: factorio act-build --entities-json <json>\n" +
         "Direction: 0=north (up), 4=east (right), 8=south (down), 12=west (left).\n" +
-        "Note: This action includes simulated walking time based on distance.\n"
+        "Note: This action physically walks into reach, performs the Factorio action, and may return blocked or out_of_reach diagnostics.\n"
       );
     case "act-mine":
       return (
         "act-mine: Mine entities at target tile coordinates (first entity at each point).\n" +
         "Usage: factorio act-mine --target x,y [--target ...]\n" +
         "   or: factorio act-mine --targets-json <json>\n" +
-        "Note: This action includes simulated walking time based on distance, plus ~2s per item mined.\n"
+        "Note: This action physically walks into reach, performs the Factorio action, and may return blocked or out_of_reach diagnostics.\n"
       );
     case "act-rotate":
       return (
@@ -179,7 +179,7 @@ function usageForCommand(command: string | null) {
         "Usage: factorio act-rotate --target x,y [--target ...]\n" +
         "   or: factorio act-rotate --targets-json <json>\n" +
         "Direction (in results): 0=north (up), 4=east (right), 8=south (down), 12=west (left).\n" +
-        "Note: This action includes simulated walking time based on distance.\n"
+        "Note: This action physically walks into reach, performs the Factorio action, and may return blocked or out_of_reach diagnostics.\n"
       );
     case "act-move":
       return (
@@ -193,7 +193,7 @@ function usageForCommand(command: string | null) {
         "act-set-recipe: Set the recipe on assemblers at target tile coordinates.\n" +
         "Usage: factorio act-set-recipe --target x,y,recipe [--target ...]\n" +
         "   or: factorio act-set-recipe --targets-json <json>\n" +
-        "Note: This action includes simulated walking time based on distance.\n"
+        "Note: This action physically walks into reach, performs the Factorio action, and may return blocked or out_of_reach diagnostics.\n"
       );
     case "act-research":
       return (
@@ -209,13 +209,13 @@ function usageForCommand(command: string | null) {
       return (
         "act-insert: Move items from player inventory into an entity at x,y.\n" +
         "Usage: factorio act-insert --entity x,y --item <name> --count <n>\n" +
-        "Note: This action includes simulated walking time based on distance.\n"
+        "Note: This action physically walks into reach, performs the Factorio action, and may return blocked or out_of_reach diagnostics.\n"
       );
     case "act-extract":
       return (
         "act-extract: Remove items from an entity at x,y into player inventory.\n" +
         "Usage: factorio act-extract --entity x,y --item <name> --count <n|all>\n" +
-        "Note: This action includes simulated walking time based on distance.\n"
+        "Note: This action physically walks into reach, performs the Factorio action, and may return blocked or out_of_reach diagnostics.\n"
       );
     case "wait":
       return (

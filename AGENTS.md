@@ -57,7 +57,8 @@ If `observe-player` returns `{ "error": "No player" }`, the human Factorio clien
 ## Playing Rules
 
 - Treat every action as untrusted until verified with `observe-player`, `observe-entity`, or `observe-world`.
-- Long-distance actions simulate walking and can take 10+ seconds.
+- `act-move` and every target action (`act-build`, `act-mine`, `act-rotate`, `act-set-recipe`, `act-insert`, `act-extract`) are serialized through a single FIFO lock. They physically walk the character into reach before mutating game state — actions may take real game time.
+- Batches continue after per-target failures; inspect every result before moving on.
 - Prefer small-radius observations; large `observe-world` output is noisy.
 - Use `observe-resources` for patch discovery and `observe-world --include "tiles,entities"` for placement debugging.
 - Do not target the player tile with `act-mine`; it mines the first entity at that tile and can target the character.
