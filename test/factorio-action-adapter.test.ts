@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   buildCommand,
   entityProbeCommand,
+  extractCommand,
+  insertCommand,
   playerProbeCommand,
   pulseMiningCommand,
   stopMiningCommand,
@@ -56,4 +58,24 @@ test("mining commands use timed character mining state", () => {
   assert.match(pulse, /character_mining_progress/);
   assert.doesNotMatch(pulse, /mine_entity|teleport/);
   assert.match(stopMiningCommand(), /mining=false/);
+});
+
+test("transfer commands recheck reach and return rejected items", () => {
+  const sampleFurnace: EntityRef = {
+    requestedTile: { x: 1, y: 2 },
+    name: "stone-furnace",
+    type: "furnace",
+    unitNumber: 9,
+    position: { x: 1.5, y: 2.5 },
+    box: { left: 1, top: 2, right: 2, bottom: 3 },
+    amount: null,
+  };
+  const insert = insertCommand({ entity: sampleFurnace, item: "coal", count: 10 });
+  const extract = extractCommand({ entity: sampleFurnace, item: "iron-plate", count: "all" });
+  assert.match(insert, /player\.can_reach_entity/);
+  assert.match(insert, /e\.insert/);
+  assert.match(extract, /player\.can_reach_entity/);
+  assert.match(extract, /e\.remove_item/);
+  assert.match(extract, /e\.insert/);
+  assert.doesNotMatch(`${insert}${extract}`, /teleport/);
 });

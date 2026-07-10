@@ -185,6 +185,17 @@ export type RecipeOperationResult = {
   error?: ActionError;
 };
 
+export type TransferResult = {
+  ok: boolean;
+  requested: number | "all";
+  available: number;
+  removedFromSource: number;
+  insertedIntoDestination: number;
+  returnedToSource: number;
+  partial: boolean;
+  error?: ActionError;
+};
+
 export function verifyRotation(result: RotateOperationResult): RotateOperationResult {
   if (!result.ok || result.before !== result.after) return result;
   return { ...result, ok: false, error: "verification_failed" };
@@ -225,6 +236,8 @@ export interface ActionAdapter {
   restoreSelection(entity: EntityRef | null): Promise<void>;
   rotate(entity: EntityRef): Promise<RotateOperationResult>;
   setRecipe(entity: EntityRef, recipe: string): Promise<RecipeOperationResult>;
+  insert(entity: EntityRef, item: string, count: number): Promise<TransferResult>;
+  extract(entity: EntityRef, item: string, count: number | "all"): Promise<TransferResult>;
 }
 
 export class AgentActionController {
@@ -505,5 +518,53 @@ export class AgentActionController {
     }
     const result = await this.adapter.setRecipe(entity, recipe);
     return verifyRecipe({ ...result });
+  }
+
+  async insert(input: { entity: TilePoint; item: string; count: number }): Promise<TransferResult> {
+    return this.runExclusive(async () => this.runOneInsert(input));
+  }
+
+  async extract(input: { entity: TilePoint; item: string; count: number | "all" }): Promise<TransferResult> {
+    return this.runExclusive(async () => this.runOneExtract(input));
+  }
+
+  private async runOneInsert(input: { entity: TilePoint; item: string; count: number }): Promise<TransferResult> {
+    const base: TransferResult = {
+      ok: false,
+      requested: input.count,
+      available: 0,
+      removedFromSource: 0,
+      insertedIntoDestination: 0,
+      returnedToSource: 0,
+      partial: false,
+    };
+    const entity = await this.adapter.probeEntity(input.entity);
+    if (!entity) return { ...base, error: "no_entity" };
+    if (entity.type === "character") return { ...base, error: "no_entity" };
+    const approach = await this.approachEntity(entity);
+    if (!approach.ok) {
+      return { ...base, error: approach.error ?? "out_of_reach" };
+    }
+    return this.adapter.insert(entity, input.item, input.count);
+  }
+
+  private async runOneExtract(input: { entity: TilePoint; item: string; count: number | "all" }): Promise<TransferResult> {
+    const base: TransferResult = {
+      ok: false,
+      requested: input.count,
+      available: 0,
+      removedFromSource: 0,
+      insertedIntoDestination: 0,
+      returnedToSource: 0,
+      partial: false,
+    };
+    const entity = await this.adapter.probeEntity(input.entity);
+    if (!entity) return { ...base, error: "no_entity" };
+    if (entity.type === "character") return { ...base, error: "no_entity" };
+    const approach = await this.approachEntity(entity);
+    if (!approach.ok) {
+      return { ...base, error: approach.error ?? "out_of_reach" };
+    }
+    return this.adapter.extract(entity, input.item, input.count);
   }
 }

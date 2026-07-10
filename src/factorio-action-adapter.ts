@@ -10,6 +10,7 @@ import type {
   RecipeOperationResult,
   RotateOperationResult,
   TilePoint,
+  TransferResult,
   WalkResult,
 } from "./agent-actions.js";
 
@@ -465,7 +466,7 @@ export function setRecipeCommand(entity: EntityRef, recipe: string): string {
     "(function()",
     "  local player = game.get_player(1) or (game.connected_players and game.connected_players[1])",
     "  if not player or not player.character then",
-    "    rcon.print('{\"ok\":false,\"requested\":\"' .. ${recipeName} .. '\",\"before\":null,\"after\":null,\"error\":\"no_character\"}')",
+    "    rcon.print('{\"ok\":false,\"requested\":' .. ${recipeName} .. ',\"before\":null,\"after\":null,\"error\":\"no_character\"}')",
     "    return",
     "  end",
     `  local target = {x = ${tx}, y = ${ty}}`,
@@ -481,33 +482,187 @@ export function setRecipeCommand(entity: EntityRef, recipe: string): string {
     "  end",
     "  local e = find_entity()",
     "  if not e then",
-    "    rcon.print('{\"ok\":false,\"requested\":\"' .. ${recipeName} .. '\",\"before\":null,\"after\":null,\"error\":\"no_entity\"}')",
+    "    rcon.print('{\"ok\":false,\"requested\":' .. ${recipeName} .. ',\"before\":null,\"after\":null,\"error\":\"no_entity\"}')",
     "    return",
     "  end",
     "  if e.name ~= expected_name then",
-    "    rcon.print('{\"ok\":false,\"requested\":\"' .. ${recipeName} .. '\",\"before\":null,\"after\":null,\"error\":\"invalid_target\"}')",
+    "    rcon.print('{\"ok\":false,\"requested\":' .. ${recipeName} .. ',\"before\":null,\"after\":null,\"error\":\"invalid_target\"}')",
     "    return",
     "  end",
     "  if expected_unit and e.unit_number ~= expected_unit then",
-    "    rcon.print('{\"ok\":false,\"requested\":\"' .. ${recipeName} .. '\",\"before\":null,\"after\":null,\"error\":\"invalid_target\"}')",
+    "    rcon.print('{\"ok\":false,\"requested\":' .. ${recipeName} .. ',\"before\":null,\"after\":null,\"error\":\"invalid_target\"}')",
     "    return",
     "  end",
     "  if not player.can_reach_entity(e) then",
-    "    rcon.print('{\"ok\":false,\"requested\":\"' .. ${recipeName} .. '\",\"before\":null,\"after\":null,\"error\":\"out_of_reach\"}')",
+    "    rcon.print('{\"ok\":false,\"requested\":' .. ${recipeName} .. ',\"before\":null,\"after\":null,\"error\":\"out_of_reach\"}')",
     "    return",
     "  end",
     "  if not e.set_recipe then",
-    "    rcon.print('{\"ok\":false,\"requested\":\"' .. ${recipeName} .. '\",\"before\":null,\"after\":null,\"error\":\"invalid_recipe\"}')",
+    "    rcon.print('{\"ok\":false,\"requested\":' .. ${recipeName} .. ',\"before\":null,\"after\":null,\"error\":\"invalid_recipe\"}')",
     "    return",
     "  end",
     "  local before = e.recipe and e.recipe.name or nil",
     "  local ok = e.set_recipe(${recipeName})",
     "  if not ok then",
-    "    rcon.print('{\"ok\":false,\"requested\":\"' .. ${recipeName} .. '\",\"before\":\"' .. (before or '') .. '\",\"after\":null,\"error\":\"invalid_recipe\"}')",
+    "    rcon.print('{\"ok\":false,\"requested\":' .. ${recipeName} .. ',\"before\":' .. (before and ('\"' .. before .. '\"') or 'null') .. ',\"after\":null,\"error\":\"invalid_recipe\"}')",
     "    return",
     "  end",
     "  local after = e.recipe and e.recipe.name or nil",
     "  local data = string.format('{\"ok\":true,\"requested\":%s,\"before\":%s,\"after\":%s}', ${recipeName}, before and ('\"' .. before .. '\"') or 'null', after and ('\"' .. after .. '\"') or 'null')",
+    "  rcon.print(data)",
+    "end)()",
+  ].join("\n");
+}
+
+export function insertCommand(input: {
+  entity: EntityRef;
+  item: string;
+  count: number;
+}): string {
+  const name = luaString(input.entity.name);
+  const itemName = luaString(input.item);
+  const tx = luaNumber(input.entity.requestedTile.x);
+  const ty = luaNumber(input.entity.requestedTile.y);
+  const unit = input.entity.unitNumber === null
+    ? "nil"
+    : luaNumber(input.entity.unitNumber);
+  const count = luaNumber(input.count);
+  return [
+    "(function()",
+    "  local player = game.get_player(1) or (game.connected_players and game.connected_players[1])",
+    "  if not player or not player.character then",
+    "    rcon.print('{\"ok\":false,\"requested\":0,\"available\":0,\"removed_from_source\":0,\"inserted_into_destination\":0,\"returned_to_source\":0,\"partial\":false,\"error\":\"no_character\"}')",
+    "    return",
+    "  end",
+    `  local target = {x = ${tx}, y = ${ty}}`,
+    `  local expected_name = ${name}`,
+    `  local expected_unit = ${unit}`,
+    `  local item = ${itemName}`,
+    `  local requested = ${count}`,
+    "  local surface = player.surface",
+    "  local function find_entity()",
+    "    local ents = surface.find_entities_filtered{area={{target.x-0.5, target.y-0.5}, {target.x+0.5, target.y+0.5}}}",
+    "    for _, e in ipairs(ents) do",
+    "      if e.type ~= 'character' then return e end",
+    "    end",
+    "    return surface.get_entity(target)",
+    "  end",
+    "  local e = find_entity()",
+    "  if not e then",
+    "    rcon.print('{\"ok\":false,\"requested\":' .. tostring(requested) .. ',\"available\":0,\"removed_from_source\":0,\"inserted_into_destination\":0,\"returned_to_source\":0,\"partial\":false,\"error\":\"no_entity\"}')",
+    "    return",
+    "  end",
+    "  if e.name ~= expected_name then",
+    "    rcon.print('{\"ok\":false,\"requested\":' .. tostring(requested) .. ',\"available\":0,\"removed_from_source\":0,\"inserted_into_destination\":0,\"returned_to_source\":0,\"partial\":false,\"error\":\"invalid_target\"}')",
+    "    return",
+    "  end",
+    "  if expected_unit and e.unit_number ~= expected_unit then",
+    "    rcon.print('{\"ok\":false,\"requested\":' .. tostring(requested) .. ',\"available\":0,\"removed_from_source\":0,\"inserted_into_destination\":0,\"returned_to_source\":0,\"partial\":false,\"error\":\"invalid_target\"}')",
+    "    return",
+    "  end",
+    "  if not player.can_reach_entity(e) then",
+    "    rcon.print('{\"ok\":false,\"requested\":' .. tostring(requested) .. ',\"available\":0,\"removed_from_source\":0,\"inserted_into_destination\":0,\"returned_to_source\":0,\"partial\":false,\"error\":\"out_of_reach\"}')",
+    "    return",
+    "  end",
+    "  local available = player.get_item_count(item) or 0",
+    "  local to_remove = math.min(available, requested)",
+    "  if to_remove <= 0 then",
+    "    rcon.print(string.format('{\"ok\":true,\"requested\":%d,\"available\":%d,\"removed_from_source\":0,\"inserted_into_destination\":0,\"returned_to_source\":0,\"partial\":false}', requested, available))",
+    "    return",
+    "  end",
+    "  local removed = player.remove_item{name=item, count=to_remove}",
+    "  if removed <= 0 then",
+    "    rcon.print(string.format('{\"ok\":false,\"requested\":%d,\"available\":%d,\"removed_from_source\":0,\"inserted_into_destination\":0,\"returned_to_source\":0,\"partial\":false,\"error\":\"missing_item\"}', requested, available))",
+    "    return",
+    "  end",
+    "  local inserted = e.insert{name=item, count=removed}",
+    "  local leftover = removed - (inserted or 0)",
+    "  if leftover > 0 then",
+    "    player.insert{name=item, count=leftover}",
+    "  end",
+    "  local partial = inserted ~= removed or available < requested",
+    "  local data = string.format('{\"ok\":true,\"requested\":%d,\"available\":%d,\"removed_from_source\":%d,\"inserted_into_destination\":%d,\"returned_to_source\":%d,\"partial\":%s}',",
+    "    requested, available, removed, inserted or 0, leftover, tostring(partial))",
+    "  rcon.print(data)",
+    "end)()",
+  ].join("\n");
+}
+
+export function extractCommand(input: {
+  entity: EntityRef;
+  item: string;
+  count: number | "all";
+}): string {
+  const name = luaString(input.entity.name);
+  const itemName = luaString(input.item);
+  const tx = luaNumber(input.entity.requestedTile.x);
+  const ty = luaNumber(input.entity.requestedTile.y);
+  const unit = input.entity.unitNumber === null
+    ? "nil"
+    : luaNumber(input.entity.unitNumber);
+  const countLua = input.count === "all"
+    ? '"all"'
+    : luaNumber(input.count);
+  const errJson =
+    "'{\"ok\":false,\"requested\":0,\"available\":0,\"removed_from_source\":0,\"inserted_into_destination\":0,\"returned_to_source\":0,\"partial\":false,\"error\":\"X\"}'";
+  void errJson;
+  return [
+    "(function()",
+    "  local player = game.get_player(1) or (game.connected_players and game.connected_players[1])",
+    "  if not player or not player.character then",
+    "    rcon.print('{\"ok\":false,\"requested\":0,\"available\":0,\"removed_from_source\":0,\"inserted_into_destination\":0,\"returned_to_source\":0,\"partial\":false,\"error\":\"no_character\"}')",
+    "    return",
+    "  end",
+    `  local target = {x = ${tx}, y = ${ty}}`,
+    `  local expected_name = ${name}`,
+    `  local expected_unit = ${unit}`,
+    `  local item = ${itemName}`,
+    `  local requested = ${countLua}`,
+    "  local surface = player.surface",
+    "  local function find_entity()",
+    "    local ents = surface.find_entities_filtered{area={{target.x-0.5, target.y-0.5}, {target.x+0.5, target.y+0.5}}}",
+    "    for _, e in ipairs(ents) do",
+    "      if e.type ~= 'character' then return e end",
+    "    end",
+    "    return surface.get_entity(target)",
+    "  end",
+    "  local e = find_entity()",
+    "  if not e then",
+    "    rcon.print('{\"ok\":false,\"requested\":0,\"available\":0,\"removed_from_source\":0,\"inserted_into_destination\":0,\"returned_to_source\":0,\"partial\":false,\"error\":\"no_entity\"}')",
+    "    return",
+    "  end",
+    "  if e.name ~= expected_name then",
+    "    rcon.print('{\"ok\":false,\"requested\":0,\"available\":0,\"removed_from_source\":0,\"inserted_into_destination\":0,\"returned_to_source\":0,\"partial\":false,\"error\":\"invalid_target\"}')",
+    "    return",
+    "  end",
+    "  if expected_unit and e.unit_number ~= expected_unit then",
+    "    rcon.print('{\"ok\":false,\"requested\":0,\"available\":0,\"removed_from_source\":0,\"inserted_into_destination\":0,\"returned_to_source\":0,\"partial\":false,\"error\":\"invalid_target\"}')",
+    "    return",
+    "  end",
+    "  if not player.can_reach_entity(e) then",
+    "    rcon.print('{\"ok\":false,\"requested\":0,\"available\":0,\"removed_from_source\":0,\"inserted_into_destination\":0,\"returned_to_source\":0,\"partial\":false,\"error\":\"out_of_reach\"}')",
+    "    return",
+    "  end",
+    "  local available = e.get_item_count(item) or 0",
+    "  local to_remove = (requested == 'all') and available or math.min(available, requested)",
+    "  if to_remove <= 0 then",
+    "    rcon.print(string.format('{\"ok\":true,\"requested\":0,\"available\":%d,\"removed_from_source\":0,\"inserted_into_destination\":0,\"returned_to_source\":0,\"partial\":false}', available))",
+    "    return",
+    "  end",
+    "  local removed = e.remove_item{name=item, count=to_remove}",
+    "  if removed <= 0 then",
+    "    rcon.print(string.format('{\"ok\":false,\"requested\":%d,\"available\":%d,\"removed_from_source\":0,\"inserted_into_destination\":0,\"returned_to_source\":0,\"partial\":false,\"error\":\"inventory_empty\"}', tonumber(requested) or 0, available))",
+    "    return",
+    "  end",
+    "  local inserted = player.insert{name=item, count=removed}",
+    "  local leftover = removed - (inserted or 0)",
+    "  if leftover > 0 then",
+    "    e.insert{name=item, count=leftover}",
+    "  end",
+    "  local req_num = (requested == 'all') and available or tonumber(requested)",
+    "  local partial = inserted ~= removed or available < req_num",
+    "  local data = string.format('{\"ok\":true,\"requested\":%d,\"available\":%d,\"removed_from_source\":%d,\"inserted_into_destination\":%d,\"returned_to_source\":%d,\"partial\":%s}',",
+    "    req_num, available, removed, inserted or 0, leftover, tostring(partial))",
     "  rcon.print(data)",
     "end)()",
   ].join("\n");
@@ -778,6 +933,60 @@ export class FactorioActionAdapter implements ActionAdapter {
       requested: recipe,
       before: raw.before ?? null,
       after: raw.after ?? null,
+    };
+  }
+
+  async insert(entity: EntityRef, item: string, count: number): Promise<TransferResult> {
+    return this.parseTransfer(await this.execute(insertCommand({ entity, item, count })), count);
+  }
+
+  async extract(
+    entity: EntityRef,
+    item: string,
+    count: number | "all",
+  ): Promise<TransferResult> {
+    return this.parseTransfer(
+      await this.execute(extractCommand({ entity, item, count })),
+      count,
+    );
+  }
+
+  private parseTransfer(raw: string, requested: number | "all"): TransferResult {
+    let parsed: any;
+    try {
+      parsed = parseJson<any>(raw);
+    } catch (err: any) {
+      return {
+        ok: false,
+        requested,
+        available: 0,
+        removedFromSource: 0,
+        insertedIntoDestination: 0,
+        returnedToSource: 0,
+        partial: false,
+        error: "verification_failed",
+      };
+    }
+    if (!parsed || parsed.ok !== true) {
+      return {
+        ok: false,
+        requested,
+        available: Number(parsed?.available ?? 0),
+        removedFromSource: Number(parsed?.removed_from_source ?? 0),
+        insertedIntoDestination: Number(parsed?.inserted_into_destination ?? 0),
+        returnedToSource: Number(parsed?.returned_to_source ?? 0),
+        partial: parsed?.partial === true,
+        error: parsed?.error || "verification_failed",
+      };
+    }
+    return {
+      ok: true,
+      requested: Number(parsed.requested ?? 0),
+      available: Number(parsed.available ?? 0),
+      removedFromSource: Number(parsed.removed_from_source ?? 0),
+      insertedIntoDestination: Number(parsed.inserted_into_destination ?? 0),
+      returnedToSource: Number(parsed.returned_to_source ?? 0),
+      partial: parsed.partial === true,
     };
   }
 }

@@ -12,6 +12,7 @@ import {
   type Box,
   type BuildRequest,
   type MiningSnapshot,
+  type TransferResult,
 } from "../src/agent-actions.js";
 
 test("rotateBox rotates a rectangular footprint for east-facing placement", () => {
@@ -313,5 +314,19 @@ test("recipe result requires exact readback", () => {
     }).error,
     "invalid_recipe",
   );
+});
+
+test("transfer results conserve items", () => {
+  const results: TransferResult[] = [
+    { ok: true, requested: 10, available: 10, removedFromSource: 10, insertedIntoDestination: 10, returnedToSource: 0, partial: false },
+    { ok: true, requested: 10, available: 10, removedFromSource: 10, insertedIntoDestination: 4, returnedToSource: 6, partial: true },
+    { ok: true, requested: "all", available: 7, removedFromSource: 7, insertedIntoDestination: 0, returnedToSource: 7, partial: true },
+  ];
+  for (const result of results) {
+    assert.equal(
+      result.removedFromSource,
+      result.insertedIntoDestination + result.returnedToSource,
+    );
+  }
 });
 
