@@ -117,3 +117,29 @@ export function generateApproachCandidates(input: {
       Math.hypot(b.x - player.x, b.y - player.y),
   );
 }
+
+export interface ActionAdapter {
+  walkToPoint(target: Point): Promise<WalkResult>;
+}
+
+export class AgentActionController {
+  private readonly lock = new AsyncFifoLock();
+
+  constructor(private readonly adapter: ActionAdapter) {}
+
+  runExclusive<T>(work: () => Promise<T>): Promise<T> {
+    return this.lock.run(work);
+  }
+
+  moveTiles(targets: TilePoint[]): Promise<WalkResult[]> {
+    return this.runExclusive(async () => {
+      const results: WalkResult[] = [];
+      for (const target of targets) {
+        results.push(
+          await this.adapter.walkToPoint({ x: target.x + 0.5, y: target.y + 0.5 }),
+        );
+      }
+      return results;
+    });
+  }
+}

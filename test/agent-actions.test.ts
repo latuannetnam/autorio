@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  AgentActionController,
   AsyncFifoLock,
   generateApproachCandidates,
   rotateBox,
+  type ActionAdapter,
   type Box,
 } from "../src/agent-actions.js";
 
@@ -42,3 +44,32 @@ test("AsyncFifoLock runs queued work in submission order", async () => {
   await Promise.all([first, second]);
   assert.deepEqual(order, [1, 2]);
 });
+
+function movementAdapter(events: string[]): ActionAdapter {
+  return {
+    async walkToPoint(target) {
+      events.push(`walk:${target.x},${target.y}`);
+      return {
+        ok: true,
+        reached: true,
+        blocked: false,
+        position: target,
+        target,
+        distanceRemaining: 0,
+        elapsedMs: 1,
+        steps: 1,
+      };
+    },
+  } as ActionAdapter;
+}
+
+test("moveTiles converts public tile coordinates and shares the FIFO lock", async () => {
+  const events: string[] = [];
+  const controller = new AgentActionController(movementAdapter(events));
+  await Promise.all([
+    controller.moveTiles([{ x: 2, y: 3 }]),
+    controller.runExclusive(async () => events.push("action")),
+  ]);
+  assert.deepEqual(events, ["walk:2.5,3.5", "action"]);
+});
+

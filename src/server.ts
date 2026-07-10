@@ -4,6 +4,11 @@ import fsSync from "fs";
 import { promises as fs } from "fs";
 import path from "path";
 import net from "net";
+import {
+  AgentActionController,
+  type ActionAdapter,
+  type WalkResult,
+} from "./agent-actions.js";
 
 const ROOT = process.cwd();
 
@@ -2034,18 +2039,28 @@ async function walkAgentToTarget(
   }
 
   const requested: Point = { x: parsedX, y: parsedY };
-  const target = tileCenter(requested);
-  let bestDistance = Number.POSITIVE_INFINITY;
-  let bestProgressAt = started;
+  return walkAgentToPoint(tileCenter(requested), requested, started, steps, position);
+}
 
+async function walkAgentToPoint(
+  target: Point,
+  requested: Point = target,
+  started: number = Date.now(),
+  steps: number = 0,
+  initialPosition: Point | null = null,
+): Promise<WalkToTargetResult> {
+  let position = initialPosition;
+  let countedSteps = steps;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  let bestProgressAt = Date.now();
   try {
-    const startPosition = await probeAgentPlayerPosition();
+    const startPosition =
+      initialPosition ?? (await probeAgentPlayerPosition());
     const expectedDistance = distanceBetween(startPosition, target);
     const timeoutMs = Math.max(
       AGENT_MOVE_MIN_TIMEOUT_MS,
       walkDelayMs(expectedDistance) + AGENT_MOVE_TIMEOUT_PADDING_MS,
     );
-
     position = startPosition;
     while (Date.now() - started <= timeoutMs) {
       const distance = distanceBetween(position, target);
@@ -2061,7 +2076,7 @@ async function walkAgentToTarget(
           target,
           distance_remaining: distance,
           elapsed_ms: Date.now() - started,
-          steps,
+          steps: countedSteps,
         };
       }
 
@@ -2080,7 +2095,7 @@ async function walkAgentToTarget(
           target,
           distance_remaining: distance,
           elapsed_ms: Date.now() - started,
-          steps,
+          steps: countedSteps,
           error: "blocked",
         };
       }
@@ -2098,7 +2113,7 @@ async function walkAgentToTarget(
           target,
           distance_remaining: distance,
           elapsed_ms: Date.now() - started,
-          steps,
+          steps: countedSteps,
         };
       }
 
@@ -2119,12 +2134,12 @@ async function walkAgentToTarget(
           target,
           distance_remaining: distance,
           elapsed_ms: Date.now() - started,
-          steps,
+          steps: countedSteps,
           error: data?.error || "set_walking_failed",
         };
       }
 
-      steps += 1;
+      countedSteps += 1;
       await new Promise((resolve) => setTimeout(resolve, AGENT_MOVE_POLL_MS));
       position = await probeAgentPlayerPosition();
     }
@@ -2141,7 +2156,7 @@ async function walkAgentToTarget(
       target,
       distance_remaining: distance,
       elapsed_ms: Date.now() - started,
-      steps,
+      steps: countedSteps,
       error: "timeout",
     };
   } catch (err: any) {
@@ -2151,16 +2166,38 @@ async function walkAgentToTarget(
       y: requested.y,
       ok: false,
       reached: false,
-      blocked: false,
+      blocked: err?.message === "blocked",
       position,
       target,
       distance_remaining: position ? distanceBetween(position, target) : null,
       elapsed_ms: Date.now() - started,
-      steps,
+      steps: countedSteps,
       error: err?.message || "move_failed",
     };
   }
 }
+
+function mapWalkResult(result: WalkToTargetResult): WalkResult {
+  return {
+    ok: result.ok,
+    reached: result.reached,
+    blocked: result.blocked,
+    position: result.position,
+    target: result.target,
+    distanceRemaining: result.distance_remaining,
+    elapsedMs: result.elapsed_ms,
+    steps: result.steps,
+    error: result.error,
+  };
+}
+
+const movementAdapter: ActionAdapter = {
+  async walkToPoint(target) {
+    return mapWalkResult(await walkAgentToPoint(target));
+  },
+};
+
+const actionController = new AgentActionController(movementAdapter);
 
 setInterval(() => {
   sampleUsage().catch(() => {});
@@ -2619,14 +2656,47 @@ async function handleApi(req: IncomingMessage, res: ServerResponse) {
     const max = clampInt(limits.max, AGENT_MAX_ACTIONS, 1, AGENT_MAX_ACTIONS);
     const trimmed = targets.slice(0, max);
     try {
+      const tileTargets: { x: number; y: number }[] = [];
       const results: any[] = [];
+      const started = Date.now();
       for (const target of trimmed) {
-        results.push(
-          await walkAgentToTarget({
-            x: target?.x,
-            y: target?.y,
-          }),
-        );
+        const parsedX = parseMovementCoordinate(target?.x);
+        const parsedY = parseMovementCoordinate(target?.y);
+        if (parsedX === null || parsedY === null) {
+          results.push({
+            x: Number(target?.x),
+            y: Number(target?.y),
+            ok: false,
+            reached: false,
+            blocked: false,
+            position: null,
+            target: { x: Number(target?.x) + 0.5, y: Number(target?.y) + 0.5 },
+            distance_remaining: null,
+            elapsed_ms: Date.now() - started,
+            steps: 0,
+            error: "invalid_target",
+          });
+          continue;
+        }
+        tileTargets.push({ x: parsedX, y: parsedY });
+      }
+      const walkResults = await actionController.moveTiles(tileTargets);
+      for (let i = 0; i < tileTargets.length; i += 1) {
+        const t = tileTargets[i];
+        const w = walkResults[i];
+        results.push({
+          x: t.x,
+          y: t.y,
+          ok: w.ok,
+          reached: w.reached,
+          blocked: w.blocked,
+          position: w.position,
+          target: w.target,
+          distance_remaining: w.distanceRemaining,
+          elapsed_ms: w.elapsedMs,
+          steps: w.steps,
+          error: w.error,
+        });
       }
       return json(res, 200, {
         ok: true,
