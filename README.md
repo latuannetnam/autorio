@@ -13,6 +13,16 @@ serves a small web UI for status, logs, RCON, and world inspection.
 - `src/agent-cli.ts` is the CLI Codex uses to observe the world and act in it.
 - The human Factorio client connects to the same local server to watch the agent.
 
+### Agent Action Architecture
+
+Every target action (`act-move`, `act-build`, `act-mine`, `act-rotate`, `act-set-recipe`, `act-insert`, `act-extract`) physically walks the player character into reach before touching game state — there is no teleporting, no `surface.create_entity`, no `player.mine_entity`, and no simulated travel delay. The architecture is split into three layers:
+
+- `src/agent-actions.ts` — shared types (`ActionAdapter`, `Point`, `Box`, `WalkResult`, etc.), an `AsyncFifoLock` that serializes public `act-move` together with every target action, and `AgentActionController` which owns candidate generation (`generateApproachCandidates`), per-target batches, and approach fallback.
+- `src/factorio-action-adapter.ts` — all Factorio 2.0.73 probe and mutation Lua. Each command is a pure builder (`playerProbeCommand`, `entityProbeCommand`, `buildCommand`, `pulseMiningCommand`, `rotateCommand`, `setRecipeCommand`, `insertCommand`, `extractCommand`, etc.) wrapped by `FactorioActionAdapter` which injects RCON and the movement function.
+- `src/server.ts` — HTTP routing only. Each `act-*` route hands its target list to the controller and maps the camelCase result back to the existing snake_case response envelope.
+
+Action batches hold the FIFO lock, walk each candidate from nearest-first sorted list, retry the next candidate when the character is blocked, and continue past per-target failures. `act-build` uses an atomic cursor transaction (save current cursor → place via `cursor.swap_stack` + `player.build_from_cursor` → restore cursor → destroy temp inventory) and only destroys the temp inventory if it is empty; if cursor restoration fails the saved stack is left in temp and `cursor_restore_failed` is returned. `act-mine` enters the player's timed mining state via `player.update_selected_entity` + `player.mining_state = {mining=true, position=...}`, polls `player.character_mining_progress`, and stops after one `amount` decrease for resources. `act-insert` / `act-extract` use `LuaControl.insert` and `LuaControl.remove_item` automatically (no explicit inventory indexes) and return lossless counts (`removed_from_source = inserted_into_destination + returned_to_source`).
+
 In the current local setup:
 
 - Factorio executable: `E:\Games\Factorio\bin\x64\factorio.exe`
@@ -29,6 +39,30 @@ npm run build
 ```
 
 `npm run dev` exists, but on this Windows sandbox `tsx`/esbuild can hit `spawn EPERM`. Use the compiled server with `npm run start` for the reliable runtime path.
+
+## Tests
+
+```powershell
+npm test
+```
+
+Test files live in `test/` and run under `tsx --test`. They cover:
+
+- FIFO lock ordering and shared work (`AsyncFifoLock`)
+- Approach candidate geometry and sorting (`generateApproachCandidates`, `rotateBox`)
+- `AgentActionController` move/build/mine batching against a fake `ActionAdapter`
+- `FactorioActionAdapter` Lua command builders and conservation (`insertCommand` / `extractCommand`)
+- CLI help text for every target action uses the new "physically walks" wording and no longer mentions "simulated walking"
+
+## Agent Action Diagnostics
+
+All target actions share the same response contract (`{ok:true, data:{ results }, truncated}` for batched actions, `{ok:true, data}` for single-result `act-insert`/`act-extract`) plus the existing HTTP 400/409 envelopes. Per-target results may carry:
+
+- `error`: `"blocked"` (no candidate succeeded), `"out_of_reach"` (approach succeeded but the entity drifted out of reach before the mutation), `"no_entity"` / `"not_minable"` / `"missing_item"` / `"invalid_recipe"` / `"verification_failed"` / `"cursor_restore_failed"`.
+- `attempts` (where applicable): the ordered list of candidates the controller tried, with `movement.ok`, `reachable`, and `error` per attempt. Inspect this to debug a blocked first candidate versus a fully-blocked target.
+- `cycles`, `final.amount`, etc. (`act-mine` only): how many pulses ran and the resource amount observed at completion.
+
+Always verify mutations with `observe-entity` or `observe-player` before proceeding — actions can take real game time and the controller continues past per-target failures.
 
 ## Local Config
 
@@ -122,23 +156,38 @@ Scan resources:
 npm run agent -- observe-resources -- --window-x 0 --window-y 0 --radius 180
 ```
 
-Build an entity:
+Build an entity (character walks to the tile, places via the cursor, and restores the original cursor stack):
 
 ```powershell
 npm run agent -- act-build -- --entity "burner-mining-drill,-60,-49,4"
 ```
 
-Insert fuel/items:
+Mine an entity or a single resource cycle (uses `mining_state`, stops after one `amount` decrease for resources):
+
+```powershell
+npm run agent -- act-mine -- --target "-60,-49"
+```
+
+Rotate (or configure a recipe) on a target the character can already reach:
+
+```powershell
+npm run agent -- act-rotate -- --target "-58,-49"
+npm run agent -- act-set-recipe -- --target "-58,-49,iron-gear-wheel"
+```
+
+Insert fuel/items (lossless: any rejected count is returned to the source):
 
 ```powershell
 npm run agent -- act-insert -- --entity "-60,-49" --item coal --count 1
 ```
 
-Extract from a container:
+Extract from a container (`--count all` removes everything currently in inventory):
 
 ```powershell
 npm run agent -- act-extract -- --entity "-5,-6" --item firearm-magazine --count all
 ```
+
+All `act-*` commands share the FIFO lock with `act-move`, so concurrent calls serialize naturally — submitting several in parallel will not race the character.
 
 ## First-Run Play Notes
 
