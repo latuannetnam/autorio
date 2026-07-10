@@ -98,7 +98,7 @@ These are local runtime files and are ignored by git:
 If `codex.zip` does not exist, create it with:
 
 ```powershell
-& "E:\Games\Factorio\bin\x64\factorio.exe" --config "D:\latuan\Programming\autorio\factorio\config\config.ini" --create "D:\latuan\Programming\autorio\factorio\saves\codex.zip"
+& "E:\Games\Factorio\bin\x64\factorio.exe" --config "autorio\factorio\config\config.ini" --create "autorio\factorio\saves\codex.zip"
 ```
 
 ## Start The Server
