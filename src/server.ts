@@ -4,6 +4,11 @@ import fsSync from "fs";
 import { promises as fs } from "fs";
 import path from "path";
 import net from "net";
+import {
+  AgentActionController,
+  type WalkResult,
+} from "./agent-actions.js";
+import { FactorioActionAdapter } from "./factorio-action-adapter.js";
 
 const ROOT = process.cwd();
 
@@ -795,268 +800,6 @@ function agentRecipesCommand(params: {
   return parts.join(" ");
 }
 
-function agentBuildCommand(
-  items: Array<{ name: string; x: number; y: number; direction?: number }>,
-): string {
-  const parts = [
-    "/sc",
-    "local s=game.surfaces[1]",
-    "local player=game.players[1]",
-    "local force=player and player.force or game.forces.player or game.forces[1]",
-    "local function esc(v)",
-    "if v==nil then return 'null' end",
-    "local t=type(v)",
-    'if t==\"string\" then',
-    "return '\"'..v:gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
-    'elseif t==\"number\" or t==\"boolean\" then',
-    "return tostring(v)",
-    "else",
-    "return '\"'..tostring(v):gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
-    "end",
-    "end",
-    "local results={}",
-    "local function move_near(x,y)",
-    "if not player or not player.character then return false,'no_character' end",
-    "local function is_too_close(pos)",
-    "if not pos then return true end",
-    "local dx=pos.x - x",
-    "local dy=pos.y - y",
-    "return (dx*dx + dy*dy) < 0.49",
-    "end",
-    "local safe_pos=s.find_non_colliding_position('character',{x=x,y=y},6,0.5)",
-    "if is_too_close(safe_pos) then",
-    "local offsets={{1.5,0},{-1.5,0},{0,1.5},{0,-1.5},{1.5,1.5},{-1.5,1.5},{1.5,-1.5},{-1.5,-1.5}}",
-    "for i=1,#offsets do",
-    "local off=offsets[i]",
-    "local candidate=s.find_non_colliding_position('character',{x=x+off[1],y=y+off[2]},6,0.5)",
-    "if not is_too_close(candidate) then",
-    "safe_pos=candidate",
-    "break",
-    "end",
-    "end",
-    "end",
-    "if safe_pos then player.teleport(safe_pos) return true end",
-    "return false,'out_of_reach'",
-    "end",
-    "local function place(name,x,y,dir)",
-    "if not player or not player.character then return {name=name,x=x,y=y,ok=false,error='no_character'} end",
-    "local moved,move_err=move_near(x,y)",
-    "if not moved then return {name=name,x=x,y=y,ok=false,error=move_err or 'out_of_reach'} end",
-    "local function take_item()",
-    "local removed=player.remove_item{name=name,count=1}",
-    "if removed < 1 then return 0,'missing_item' end",
-    "return removed,nil",
-    "end",
-    "local can_surface=s.can_place_entity{name=name,position={x=x,y=y},direction=dir,force=force}",
-    "local can_player=player.can_place_entity and player.can_place_entity{name=name,position={x=x,y=y},direction=dir,force=force} or can_surface",
-    "if not can_player then",
-    "if can_surface then",
-    "return {name=name,x=x,y=y,ok=false,error='out_of_reach',detail='Target is out of reach'}",
-    "end",
-    "local colliders=s.find_entities_filtered{area={{x-1,y-1},{x+2,y+2}}} or {}",
-    "local blocking=nil",
-    "local only_resources=true",
-    "for _,c in pairs(colliders) do",
-    "if c.valid then",
-    "if c.type ~= 'resource' then",
-    "only_resources=false",
-    "blocking={name=c.name,x=math.floor(c.position.x),y=math.floor(c.position.y)}",
-    "break",
-    "end",
-    "end",
-    "end",
-    "if only_resources then",
-    "local removed,remove_err=take_item()",
-    "if remove_err then return {name=name,x=x,y=y,ok=false,error=remove_err} end",
-    "local ok_res,created=pcall(function()",
-    "return s.create_entity{ name=name, position={x=x,y=y}, direction=dir, force=force }",
-    "end)",
-    "if ok_res and created then",
-    "return {name=name,x=x,y=y,ok=true,center_x=created.position.x,center_y=created.position.y,direction=created.direction}",
-    "elseif ok_res then",
-    "return {name=name,x=x,y=y,ok=true}",
-    "else",
-    "player.insert{name=name,count=removed}",
-    "return {name=name,x=x,y=y,ok=false,error='create_failed',detail=tostring(created)}",
-    "end",
-    "end",
-    "local tile=s.get_tile(x,y)",
-    "local tile_name=tile and tile.name or 'unknown'",
-    "if blocking then",
-    "return {name=name,x=x,y=y,ok=false,error='collision',detail='Blocked by '..blocking.name..' at '..blocking.x..','..blocking.y,blocking_entity=blocking}",
-    "else",
-    "return {name=name,x=x,y=y,ok=false,error='invalid_position',tile=tile_name,detail='Cannot place on '..tile_name}",
-    "end",
-    "end",
-    "local removed,remove_err=take_item()",
-    "if remove_err then return {name=name,x=x,y=y,ok=false,error=remove_err} end",
-    "local ok,result=pcall(function()",
-    "return s.create_entity{ name=name, position={x=x,y=y}, direction=dir, force=force }",
-    "end)",
-    "if ok and result then return {name=name,x=x,y=y,ok=true,center_x=result.position.x,center_y=result.position.y,direction=result.direction} end",
-    "if ok then return {name=name,x=x,y=y,ok=true} end",
-    "player.insert{name=name,count=removed}",
-    "return {name=name,x=x,y=y,ok=false,error='create_failed',detail=tostring(result)}",
-    "end",
-  ];
-  for (const item of items) {
-    const dir = item.direction ?? 0;
-    parts.push(
-      `table.insert(results,place(${luaString(item.name)},${item.x},${item.y},${dir}))`,
-    );
-  }
-  parts.push(
-    "local out={}",
-    "for i=1,#results do",
-    "local r=results[i]",
-    "local entry='{\"name\":'..esc(r.name)..',\"x\":'..r.x..',\"y\":'..r.y..',\"ok\":'..tostring(r.ok)",
-    "if r.error then entry=entry..',\"error\":'..esc(r.error) end",
-    "if r.detail then entry=entry..',\"detail\":'..esc(r.detail) end",
-    "if r.tile then entry=entry..',\"tile\":'..esc(r.tile) end",
-    "if r.blocking_entity then",
-    "entry=entry..',\"blocking_entity\":{\"name\":'..esc(r.blocking_entity.name)..',\"x\":'..r.blocking_entity.x..',\"y\":'..r.blocking_entity.y..'}'",
-    "end",
-    "if r.center_x then entry=entry..',\"center_x\":'..esc(r.center_x)..',\"center_y\":'..esc(r.center_y) end",
-    "if r.direction then entry=entry..',\"direction\":'..esc(r.direction) end",
-    "entry=entry..'}'",
-    "table.insert(out,entry)",
-    "end",
-    "local results_json='['..table.concat(out,',')..']'",
-    "rcon.print('{\"results\":'..results_json..'}')",
-  );
-  return parts.join(" ");
-}
-
-function agentMineCommand(targets: Array<{ x: number; y: number }>): string {
-  const parts = [
-    "/sc",
-    "local s=game.surfaces[1]",
-    "local player=game.players[1]",
-    'if not player then rcon.print(\'{"error":"No player"}\') return end',
-    "local function esc(v)",
-    "if v==nil then return 'null' end",
-    "local t=type(v)",
-    'if t==\"string\" then',
-    "return '\"'..v:gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
-    'elseif t==\"number\" or t==\"boolean\" then',
-    "return tostring(v)",
-    "else",
-    "return '\"'..tostring(v):gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
-    "end",
-    "end",
-    "local results={}",
-    "local function find_entity(x,y)",
-    "local ents=s.find_entities_filtered{position={x,y}} or {}",
-    "if #ents > 0 then return ents[1] end",
-    "local area={{x-0.5,y-0.5},{x+0.5,y+0.5}}",
-    "ents=s.find_entities_filtered{area=area} or {}",
-    "for i=1,#ents do",
-    "local cand=ents[i]",
-    "if cand and cand.valid and cand.minable then return cand end",
-    "end",
-    "return nil",
-    "end",
-    "local function ensure_reach(entity)",
-    "if not player.character then return false,'no_character' end",
-    "if player.can_reach_entity and player.can_reach_entity(entity) then return true end",
-    "local target_pos=entity.position",
-    "local safe_pos=s.find_non_colliding_position('character', target_pos, 6, 0.5)",
-    "if safe_pos then",
-    "player.teleport(safe_pos)",
-    "end",
-    "if player.can_reach_entity and player.can_reach_entity(entity) then return true end",
-    "return false,'out_of_reach'",
-    "end",
-    "local function estimate_mined_count(entity)",
-    "local props=entity.prototype and entity.prototype.mineable_properties or nil",
-    "local total=0",
-    "if props and props.products then",
-    "for _,prod in pairs(props.products) do",
-    "local amt=prod.amount",
-    "if not amt then",
-    "if prod.amount_min and prod.amount_max then amt=(prod.amount_min+prod.amount_max)/2 end",
-    "if not amt and prod.amount_min then amt=prod.amount_min end",
-    "if not amt and prod.amount_max then amt=prod.amount_max end",
-    "end",
-    "if not amt then amt=1 end",
-    "total=total+amt",
-    "end",
-    "end",
-    "if total <= 0 then total = 1 end",
-    "return total",
-    "end",
-    "local function mine(x,y)",
-    "local e=find_entity(x,y)",
-    "if not e then return {x=x,y=y,ok=false,error='no_entity'} end",
-    "local ename=e.name",
-    "if not e.minable then return {x=x,y=y,name=ename,ok=false,error='not_minable'} end",
-    "local can_reach,reach_err=ensure_reach(e)",
-    "if not can_reach then return {x=x,y=y,name=ename,ok=false,error=reach_err or 'out_of_reach'} end",
-    "local mined_count=estimate_mined_count(e)",
-    "local ok,err=pcall(function() player.mine_entity(e) end)",
-    "if ok then return {x=x,y=y,name=ename,ok=true,mined_count=mined_count} end",
-    "return {x=x,y=y,name=ename,ok=false,error=tostring(err)}",
-    "end",
-  ];
-  for (const target of targets) {
-    parts.push(`table.insert(results,mine(${target.x},${target.y}))`);
-  }
-  parts.push(
-    "local out={}",
-    "for i=1,#results do",
-    "local r=results[i]",
-    "local entry='{\"x\":'..r.x..',\"y\":'..r.y..',\"ok\":'..tostring(r.ok)",
-    "if r.name then entry=entry..',\"name\":'..esc(r.name) end",
-    "if r.error then entry=entry..',\"error\":'..esc(r.error) end",
-    "entry=entry..'}'",
-    "table.insert(out,entry)",
-    "end",
-    "local results_json='['..table.concat(out,',')..']'",
-    "rcon.print('{\"results\":'..results_json..'}')",
-  );
-  return parts.join(" ");
-}
-
-function agentMineProbeCommand(target: { x: number; y: number }): string {
-  const parts = [
-    "/sc",
-    "local s=game.surfaces[1]",
-    "local player=game.players[1]",
-    'if not player then rcon.print(\'{"error":"No player"}\') return end',
-    "local function esc(v)",
-    "if v==nil then return 'null' end",
-    "local t=type(v)",
-    'if t==\"string\" then',
-    "return '\"'..v:gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
-    'elseif t==\"number\" or t==\"boolean\" then',
-    "return tostring(v)",
-    "else",
-    "return '\"'..tostring(v):gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
-    "end",
-    "end",
-    "local function find_entity(x,y)",
-    "local ents=s.find_entities_filtered{position={x,y}} or {}",
-    "if #ents > 0 then return ents[1] end",
-    "local area={{x-0.5,y-0.5},{x+0.5,y+0.5}}",
-    "ents=s.find_entities_filtered{area=area} or {}",
-    "for i=1,#ents do",
-    "local cand=ents[i]",
-    "if cand and cand.valid and cand.minable then return cand end",
-    "end",
-    "return nil",
-    "end",
-    `local target_x=${target.x}`,
-    `local target_y=${target.y}`,
-    "local e=find_entity(target_x,target_y)",
-    "if not e then rcon.print('{\"error\":\"no_entity\"}') return end",
-    "local out={}",
-    "table.insert(out,'\"player\":{\"x\":'..esc(player.position.x)..',\"y\":'..esc(player.position.y)..'}')",
-    "table.insert(out,'\"entity\":{\"name\":'..esc(e.name)..',\"x\":'..esc(e.position.x)..',\"y\":'..esc(e.position.y)..',\"minable\":'..esc(e.minable)..'}')",
-    "rcon.print('{'..table.concat(out,',')..'}')",
-  ];
-  return parts.join(" ");
-}
-
 function agentPlayerPositionCommand(): string {
   const parts = [
     "/sc",
@@ -1076,9 +819,9 @@ function agentEntityProbeCommand(target: { x: number; y: number }): string {
     "local function esc(v)",
     "if v==nil then return 'null' end",
     "local t=type(v)",
-    'if t==\"string\" then',
+    'if t=="string" then',
     "return '\"'..v:gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
-    'elseif t==\"number\" or t==\"boolean\" then',
+    'elseif t=="number" or t=="boolean" then',
     "return tostring(v)",
     "else",
     "return '\"'..tostring(v):gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
@@ -1127,126 +870,6 @@ function agentStopWalkingCommand(): string {
     "if player.character then player.walking_state={walking=false,direction=defines.direction.north} end",
     "rcon.print('{\"ok\":true}')",
   ];
-  return parts.join(" ");
-}
-
-function agentRotateCommand(targets: Array<{ x: number; y: number }>): string {
-  const parts = [
-    "/sc",
-    "local s=game.surfaces[1]",
-    "local player=game.players[1]",
-    "local function esc(v)",
-    "if v==nil then return 'null' end",
-    "local t=type(v)",
-    'if t==\"string\" then',
-    "return '\"'..v:gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
-    'elseif t==\"number\" or t==\"boolean\" then',
-    "return tostring(v)",
-    "else",
-    "return '\"'..tostring(v):gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
-    "end",
-    "end",
-    "local function ensure_reach(entity)",
-    "if not player or not player.character then return false,'no_character' end",
-    "if player.can_reach_entity and player.can_reach_entity(entity) then return true end",
-    "local target_pos=entity.position",
-    "local safe_pos=s.find_non_colliding_position('character', target_pos, 6, 0.5)",
-    "if safe_pos then player.teleport(safe_pos) end",
-    "if player.can_reach_entity and player.can_reach_entity(entity) then return true end",
-    "return false,'out_of_reach'",
-    "end",
-    "local results={}",
-    "local function rotate(x,y)",
-    "local ents=s.find_entities_filtered{position={x,y}} or {}",
-    "local e=ents[1]",
-    "if not e then return {x=x,y=y,ok=false,error='no_entity'} end",
-    "local can_reach,reach_err=ensure_reach(e)",
-    "if not can_reach then return {x=x,y=y,name=e.name,ok=false,error=reach_err or 'out_of_reach'} end",
-    "local ok,err=pcall(function() e.rotate() end)",
-    "if ok then return {x=x,y=y,name=e.name,ok=true,direction=e.direction} end",
-    "return {x=x,y=y,name=e.name,ok=false,error=tostring(err)}",
-    "end",
-  ];
-  for (const target of targets) {
-    parts.push(`table.insert(results,rotate(${target.x},${target.y}))`);
-  }
-  parts.push(
-    "local out={}",
-    "for i=1,#results do",
-    "local r=results[i]",
-    "local entry='{\"x\":'..r.x..',\"y\":'..r.y..',\"ok\":'..tostring(r.ok)",
-    "if r.name then entry=entry..',\"name\":'..esc(r.name) end",
-    "if r.direction then entry=entry..',\"direction\":'..esc(r.direction) end",
-    "if r.error then entry=entry..',\"error\":'..esc(r.error) end",
-    "entry=entry..'}'",
-    "table.insert(out,entry)",
-    "end",
-    "local results_json='['..table.concat(out,',')..']'",
-    "rcon.print('{\"results\":'..results_json..'}')",
-  );
-  return parts.join(" ");
-}
-
-function agentSetRecipeCommand(
-  targets: Array<{ x: number; y: number; recipe: string }>,
-): string {
-  const parts = [
-    "/sc",
-    "local s=game.surfaces[1]",
-    "local player=game.players[1]",
-    "local function esc(v)",
-    "if v==nil then return 'null' end",
-    "local t=type(v)",
-    'if t==\"string\" then',
-    "return '\"'..v:gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
-    'elseif t==\"number\" or t==\"boolean\" then',
-    "return tostring(v)",
-    "else",
-    "return '\"'..tostring(v):gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
-    "end",
-    "end",
-    "local function ensure_reach(entity)",
-    "if not player or not player.character then return false,'no_character' end",
-    "if player.can_reach_entity and player.can_reach_entity(entity) then return true end",
-    "local target_pos=entity.position",
-    "local safe_pos=s.find_non_colliding_position('character', target_pos, 6, 0.5)",
-    "if safe_pos then player.teleport(safe_pos) end",
-    "if player.can_reach_entity and player.can_reach_entity(entity) then return true end",
-    "return false,'out_of_reach'",
-    "end",
-    "local results={}",
-    "local function set_recipe(x,y,recipe)",
-    "local ents=s.find_entities_filtered{position={x,y}} or {}",
-    "local e=ents[1]",
-    "if not e then return {x=x,y=y,ok=false,error='no_entity'} end",
-    "local can_reach,reach_err=ensure_reach(e)",
-    "if not can_reach then return {x=x,y=y,name=e.name,ok=false,error=reach_err or 'out_of_reach'} end",
-    "local ok,err=pcall(function() e.set_recipe(recipe) end)",
-    "if ok then return {x=x,y=y,name=e.name,ok=true,recipe=recipe} end",
-    "return {x=x,y=y,name=e.name,ok=false,error=tostring(err)}",
-    "end",
-  ];
-  for (const target of targets) {
-    parts.push(
-      `table.insert(results,set_recipe(${target.x},${target.y},${luaString(
-        target.recipe,
-      )}))`,
-    );
-  }
-  parts.push(
-    "local out={}",
-    "for i=1,#results do",
-    "local r=results[i]",
-    "local entry='{\"x\":'..r.x..',\"y\":'..r.y..',\"ok\":'..tostring(r.ok)",
-    "if r.name then entry=entry..',\"name\":'..esc(r.name) end",
-    "if r.recipe then entry=entry..',\"recipe\":'..esc(r.recipe) end",
-    "if r.error then entry=entry..',\"error\":'..esc(r.error) end",
-    "entry=entry..'}'",
-    "table.insert(out,entry)",
-    "end",
-    "local results_json='['..table.concat(out,',')..']'",
-    "rcon.print('{\"results\":'..results_json..'}')",
-  );
   return parts.join(" ");
 }
 
@@ -1347,124 +970,6 @@ function agentCraftCommand(recipe: string, count: number): string {
   return parts.join(" ");
 }
 
-function agentInsertCommand(params: {
-  x: number;
-  y: number;
-  item: string;
-  count: number;
-}): string {
-  const parts = [
-    "/sc",
-    "local s=game.surfaces[1]",
-    "local player=game.players[1]",
-    'if not player then rcon.print(\'{"ok":false,"error":"No player"}\') return end',
-    "local function esc(v)",
-    "if v==nil then return 'null' end",
-    "local t=type(v)",
-    'if t==\"string\" then',
-    "return '\"'..v:gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
-    'elseif t==\"number\" or t==\"boolean\" then',
-    "return tostring(v)",
-    "else",
-    "return '\"'..tostring(v):gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
-    "end",
-    "end",
-    `local x=${params.x}`,
-    `local y=${params.y}`,
-    `local item=${luaString(params.item)}`,
-    `local count=${params.count}`,
-    "local function ensure_reach(entity)",
-    "if not player or not player.character then return false,'no_character' end",
-    "if player.can_reach_entity and player.can_reach_entity(entity) then return true end",
-    "local target_pos=entity.position",
-    "local safe_pos=s.find_non_colliding_position('character', target_pos, 6, 0.5)",
-    "if safe_pos then player.teleport(safe_pos) end",
-    "if player.can_reach_entity and player.can_reach_entity(entity) then return true end",
-    "return false,'out_of_reach'",
-    "end",
-    "local ents=s.find_entities_filtered{position={x,y}} or {}",
-    "local e=ents[1]",
-    'if not e then rcon.print(\'{"ok":false,"error":"no_entity"}\') return end',
-    "local can_reach,reach_err=ensure_reach(e)",
-    "if not can_reach then rcon.print('{\"ok\":false,\"error\":'..esc(reach_err or 'out_of_reach')..'}') return end",
-    "local removed=player.remove_item{name=item,count=count}",
-    "local inserted=e.insert{name=item,count=removed}",
-    "if inserted < removed then player.insert{name=item,count=removed-inserted} end",
-    "local out={}",
-    "table.insert(out,'\"ok\":true')",
-    "table.insert(out,'\"removed\":'..esc(removed))",
-    "table.insert(out,'\"inserted\":'..esc(inserted))",
-    "rcon.print('{'..table.concat(out,',')..'}')",
-  ];
-  return parts.join(" ");
-}
-
-function agentExtractCommand(params: {
-  x: number;
-  y: number;
-  item: string;
-  count: number | "all";
-}): string {
-  const luaCount = params.count === "all" ? -1 : params.count;
-  const parts = [
-    "/sc",
-    "local s=game.surfaces[1]",
-    "local player=game.players[1]",
-    'if not player then rcon.print(\'{"ok":false,"error":"No player"}\') return end',
-    "local function esc(v)",
-    "if v==nil then return 'null' end",
-    "local t=type(v)",
-    'if t==\"string\" then',
-    "return '\"'..v:gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
-    'elseif t==\"number\" or t==\"boolean\" then',
-    "return tostring(v)",
-    "else",
-    "return '\"'..tostring(v):gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
-    "end",
-    "end",
-    `local x=${params.x}`,
-    `local y=${params.y}`,
-    `local item=${luaString(params.item)}`,
-    `local count=${luaCount}`,
-    "local function ensure_reach(entity)",
-    "if not player or not player.character then return false,'no_character' end",
-    "if player.can_reach_entity and player.can_reach_entity(entity) then return true end",
-    "local target_pos=entity.position",
-    "local safe_pos=s.find_non_colliding_position('character', target_pos, 6, 0.5)",
-    "if safe_pos then player.teleport(safe_pos) end",
-    "if player.can_reach_entity and player.can_reach_entity(entity) then return true end",
-    "return false,'out_of_reach'",
-    "end",
-    "local ents=s.find_entities_filtered{position={x,y}} or {}",
-    "local e=ents[1]",
-    'if not e then rcon.print(\'{"ok":false,"error":"no_entity"}\') return end',
-    "local can_reach,reach_err=ensure_reach(e)",
-    "if not can_reach then rcon.print('{\"ok\":false,\"error\":'..esc(reach_err or 'out_of_reach')..'}') return end",
-    "local available=e.get_item_count(item) or 0",
-    "if count == -1 then count=available end",
-    "if available < count then",
-    "local out={}",
-    "table.insert(out,'\"ok\":false')",
-    "table.insert(out,'\"error\":'..esc('count too high: requested '..count..' but only '..available..' available'))",
-    "table.insert(out,'\"available\":'..esc(available))",
-    "table.insert(out,'\"requested\":'..esc(count))",
-    "rcon.print('{'..table.concat(out,',')..'}')",
-    "return",
-    "end",
-    "if count == 0 then",
-    "rcon.print('{\"ok\":true,\"removed\":0,\"inserted\":0}')",
-    "return",
-    "end",
-    "local removed=e.remove_item{name=item,count=count}",
-    "local inserted=player.insert{name=item,count=removed}",
-    "local out={}",
-    "table.insert(out,'\"ok\":true')",
-    "table.insert(out,'\"removed\":'..esc(removed))",
-    "table.insert(out,'\"inserted\":'..esc(inserted))",
-    "rcon.print('{'..table.concat(out,',')..'}')",
-  ];
-  return parts.join(" ");
-}
 
 function agentObserveEntityCommand(
   targets: Array<{ x: number; y: number }>,
@@ -2034,18 +1539,28 @@ async function walkAgentToTarget(
   }
 
   const requested: Point = { x: parsedX, y: parsedY };
-  const target = tileCenter(requested);
-  let bestDistance = Number.POSITIVE_INFINITY;
-  let bestProgressAt = started;
+  return walkAgentToPoint(tileCenter(requested), requested, started, steps, position);
+}
 
+async function walkAgentToPoint(
+  target: Point,
+  requested: Point = target,
+  started: number = Date.now(),
+  steps: number = 0,
+  initialPosition: Point | null = null,
+): Promise<WalkToTargetResult> {
+  let position = initialPosition;
+  let countedSteps = steps;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  let bestProgressAt = Date.now();
   try {
-    const startPosition = await probeAgentPlayerPosition();
+    const startPosition =
+      initialPosition ?? (await probeAgentPlayerPosition());
     const expectedDistance = distanceBetween(startPosition, target);
     const timeoutMs = Math.max(
       AGENT_MOVE_MIN_TIMEOUT_MS,
       walkDelayMs(expectedDistance) + AGENT_MOVE_TIMEOUT_PADDING_MS,
     );
-
     position = startPosition;
     while (Date.now() - started <= timeoutMs) {
       const distance = distanceBetween(position, target);
@@ -2061,7 +1576,7 @@ async function walkAgentToTarget(
           target,
           distance_remaining: distance,
           elapsed_ms: Date.now() - started,
-          steps,
+          steps: countedSteps,
         };
       }
 
@@ -2080,7 +1595,7 @@ async function walkAgentToTarget(
           target,
           distance_remaining: distance,
           elapsed_ms: Date.now() - started,
-          steps,
+          steps: countedSteps,
           error: "blocked",
         };
       }
@@ -2098,7 +1613,7 @@ async function walkAgentToTarget(
           target,
           distance_remaining: distance,
           elapsed_ms: Date.now() - started,
-          steps,
+          steps: countedSteps,
         };
       }
 
@@ -2119,12 +1634,12 @@ async function walkAgentToTarget(
           target,
           distance_remaining: distance,
           elapsed_ms: Date.now() - started,
-          steps,
+          steps: countedSteps,
           error: data?.error || "set_walking_failed",
         };
       }
 
-      steps += 1;
+      countedSteps += 1;
       await new Promise((resolve) => setTimeout(resolve, AGENT_MOVE_POLL_MS));
       position = await probeAgentPlayerPosition();
     }
@@ -2141,7 +1656,7 @@ async function walkAgentToTarget(
       target,
       distance_remaining: distance,
       elapsed_ms: Date.now() - started,
-      steps,
+      steps: countedSteps,
       error: "timeout",
     };
   } catch (err: any) {
@@ -2151,16 +1666,37 @@ async function walkAgentToTarget(
       y: requested.y,
       ok: false,
       reached: false,
-      blocked: false,
+      blocked: err?.message === "blocked",
       position,
       target,
       distance_remaining: position ? distanceBetween(position, target) : null,
       elapsed_ms: Date.now() - started,
-      steps,
+      steps: countedSteps,
       error: err?.message || "move_failed",
     };
   }
 }
+
+function mapWalkResult(result: WalkToTargetResult): WalkResult {
+  return {
+    ok: result.ok,
+    reached: result.reached,
+    blocked: result.blocked,
+    position: result.position,
+    target: result.target,
+    distanceRemaining: result.distance_remaining,
+    elapsedMs: result.elapsed_ms,
+    steps: result.steps,
+    error: result.error,
+  };
+}
+
+const factorioActionAdapter = new FactorioActionAdapter(
+  rconCommand,
+  async (target) => mapWalkResult(await walkAgentToPoint(target)),
+);
+
+const actionController = new AgentActionController(factorioActionAdapter);
 
 setInterval(() => {
   sampleUsage().catch(() => {});
@@ -2432,63 +1968,14 @@ async function handleApi(req: IncomingMessage, res: ServerResponse) {
       .slice(0, max)
       .filter((e) => e?.name && e?.x !== undefined && e?.y !== undefined);
     try {
-      const results: any[] = [];
-      for (const entity of trimmed) {
-        const probeResponse = await rconCommand(agentPlayerPositionCommand());
-        const probe = parseRconJson<any>(
-          probeResponse,
-          "RCON probe returned invalid JSON",
-        );
-        if (probe?.error) {
-          results.push({
-            name: entity?.name,
-            x: Number(entity.x),
-            y: Number(entity.y),
-            ok: false,
-            error: probe.error,
-          });
-          continue;
-        }
-        const playerPos = probe?.player;
-        if (
-          !playerPos ||
-          !Number.isFinite(playerPos.x) ||
-          !Number.isFinite(playerPos.y)
-        ) {
-          results.push({
-            name: entity?.name,
-            x: Number(entity.x),
-            y: Number(entity.y),
-            ok: false,
-            error: "probe_failed",
-          });
-          continue;
-        }
-        const targetX = Number(entity.x) + 0.5;
-        const targetY = Number(entity.y) + 0.5;
-        const distance = Math.hypot(targetX - playerPos.x, targetY - playerPos.y);
-        const delayMs = walkDelayMs(distance);
-        if (delayMs > 0) {
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
-        }
-        const response = await rconCommand(agentBuildCommand([entity]));
-        const data = parseRconJson<any>(
-          response,
-          "RCON build returned invalid JSON",
-        );
-        const entry = data?.results?.[0];
-        if (!entry) {
-          results.push({
-            name: entity?.name,
-            x: Number(entity.x),
-            y: Number(entity.y),
-            ok: false,
-            error: "build_failed",
-          });
-        } else {
-          results.push(entry);
-        }
-      }
+      const results = await actionController.buildBatch(
+        trimmed.map((entity) => ({
+          name: String(entity.name),
+          x: Number(entity.x),
+          y: Number(entity.y),
+          direction: Number(entity.direction ?? 0),
+        })),
+      );
       return json(res, 200, {
         ok: true,
         data: { results },
@@ -2519,78 +2006,9 @@ async function handleApi(req: IncomingMessage, res: ServerResponse) {
       .slice(0, max)
       .filter((t) => t?.x !== undefined && t?.y !== undefined);
     try {
-      const results: any[] = [];
-      for (const target of trimmed) {
-        const probeResponse = await rconCommand(
-          agentMineProbeCommand({ x: Number(target.x), y: Number(target.y) }),
-        );
-        const probe = parseRconJson<any>(
-          probeResponse,
-          "RCON probe returned invalid JSON",
-        );
-        if (probe?.error) {
-          results.push({
-            x: Number(target.x),
-            y: Number(target.y),
-            ok: false,
-            error: probe.error,
-          });
-          continue;
-        }
-        const playerPos = probe?.player;
-        const entityPos = probe?.entity;
-        if (
-          !playerPos ||
-          !entityPos ||
-          !Number.isFinite(playerPos.x) ||
-          !Number.isFinite(playerPos.y) ||
-          !Number.isFinite(entityPos.x) ||
-          !Number.isFinite(entityPos.y)
-        ) {
-          results.push({
-            x: Number(target.x),
-            y: Number(target.y),
-            ok: false,
-            error: "probe_failed",
-          });
-          continue;
-        }
-        const dx = entityPos.x - playerPos.x;
-        const dy = entityPos.y - playerPos.y;
-        const distance = Math.hypot(dx, dy);
-        const delayMs = walkDelayMs(distance);
-        if (delayMs > 0) {
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
-        }
-        const response = await rconCommand(
-          agentMineCommand([{ x: Number(target.x), y: Number(target.y) }]),
-        );
-        const data = parseRconJson<any>(
-          response,
-          "RCON mine returned invalid JSON",
-        );
-        const entry = data?.results?.[0];
-        if (!entry) {
-          results.push({
-            x: Number(target.x),
-            y: Number(target.y),
-            ok: false,
-            error: "mine_failed",
-          });
-        } else {
-          results.push(entry);
-          if (entry?.ok) {
-            const minedCountRaw = Number(entry?.mined_count);
-            const minedCount = Number.isFinite(minedCountRaw)
-              ? Math.max(1, Math.ceil(minedCountRaw))
-              : 1;
-            const postDelayMs = minedCount * 2000;
-            if (postDelayMs > 0) {
-              await new Promise((resolve) => setTimeout(resolve, postDelayMs));
-            }
-          }
-        }
-      }
+      const results = await actionController.mineBatch(
+        trimmed.map((t) => ({ x: Number(t.x), y: Number(t.y) })),
+      );
       return json(res, 200, {
         ok: true,
         data: { results },
@@ -2619,14 +2037,47 @@ async function handleApi(req: IncomingMessage, res: ServerResponse) {
     const max = clampInt(limits.max, AGENT_MAX_ACTIONS, 1, AGENT_MAX_ACTIONS);
     const trimmed = targets.slice(0, max);
     try {
+      const tileTargets: { x: number; y: number }[] = [];
       const results: any[] = [];
+      const started = Date.now();
       for (const target of trimmed) {
-        results.push(
-          await walkAgentToTarget({
-            x: target?.x,
-            y: target?.y,
-          }),
-        );
+        const parsedX = parseMovementCoordinate(target?.x);
+        const parsedY = parseMovementCoordinate(target?.y);
+        if (parsedX === null || parsedY === null) {
+          results.push({
+            x: Number(target?.x),
+            y: Number(target?.y),
+            ok: false,
+            reached: false,
+            blocked: false,
+            position: null,
+            target: { x: Number(target?.x) + 0.5, y: Number(target?.y) + 0.5 },
+            distance_remaining: null,
+            elapsed_ms: Date.now() - started,
+            steps: 0,
+            error: "invalid_target",
+          });
+          continue;
+        }
+        tileTargets.push({ x: parsedX, y: parsedY });
+      }
+      const walkResults = await actionController.moveTiles(tileTargets);
+      for (let i = 0; i < tileTargets.length; i += 1) {
+        const t = tileTargets[i];
+        const w = walkResults[i];
+        results.push({
+          x: t.x,
+          y: t.y,
+          ok: w.ok,
+          reached: w.reached,
+          blocked: w.blocked,
+          position: w.position,
+          target: w.target,
+          distance_remaining: w.distanceRemaining,
+          elapsed_ms: w.elapsedMs,
+          steps: w.steps,
+          error: w.error,
+        });
       }
       return json(res, 200, {
         ok: true,
@@ -2658,69 +2109,9 @@ async function handleApi(req: IncomingMessage, res: ServerResponse) {
       .slice(0, max)
       .filter((t) => t?.x !== undefined && t?.y !== undefined);
     try {
-      const results: any[] = [];
-      for (const target of trimmed) {
-        const probeResponse = await rconCommand(
-          agentEntityProbeCommand({ x: Number(target.x), y: Number(target.y) }),
-        );
-        const probe = parseRconJson<any>(
-          probeResponse,
-          "RCON probe returned invalid JSON",
-        );
-        if (probe?.error) {
-          results.push({
-            x: Number(target.x),
-            y: Number(target.y),
-            ok: false,
-            error: probe.error,
-          });
-          continue;
-        }
-        const playerPos = probe?.player;
-        const entityPos = probe?.entity;
-        if (
-          !playerPos ||
-          !entityPos ||
-          !Number.isFinite(playerPos.x) ||
-          !Number.isFinite(playerPos.y) ||
-          !Number.isFinite(entityPos.x) ||
-          !Number.isFinite(entityPos.y)
-        ) {
-          results.push({
-            x: Number(target.x),
-            y: Number(target.y),
-            ok: false,
-            error: "probe_failed",
-          });
-          continue;
-        }
-        const distance = Math.hypot(
-          entityPos.x - playerPos.x,
-          entityPos.y - playerPos.y,
-        );
-        const delayMs = walkDelayMs(distance);
-        if (delayMs > 0) {
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
-        }
-        const response = await rconCommand(
-          agentRotateCommand([{ x: Number(target.x), y: Number(target.y) }]),
-        );
-        const data = parseRconJson<any>(
-          response,
-          "RCON rotate returned invalid JSON",
-        );
-        const entry = data?.results?.[0];
-        if (!entry) {
-          results.push({
-            x: Number(target.x),
-            y: Number(target.y),
-            ok: false,
-            error: "rotate_failed",
-          });
-        } else {
-          results.push(entry);
-        }
-      }
+      const results = await actionController.rotateBatch(
+        trimmed.map((t) => ({ x: Number(t.x), y: Number(t.y) })),
+      );
       return json(res, 200, {
         ok: true,
         data: { results },
@@ -2751,71 +2142,12 @@ async function handleApi(req: IncomingMessage, res: ServerResponse) {
       .slice(0, max)
       .filter((t) => t?.x !== undefined && t?.y !== undefined && t?.recipe);
     try {
-      const results: any[] = [];
-      for (const target of trimmed) {
-        const probeResponse = await rconCommand(
-          agentEntityProbeCommand({ x: Number(target.x), y: Number(target.y) }),
-        );
-        const probe = parseRconJson<any>(
-          probeResponse,
-          "RCON probe returned invalid JSON",
-        );
-        if (probe?.error) {
-          results.push({
-            x: Number(target.x),
-            y: Number(target.y),
-            ok: false,
-            error: probe.error,
-          });
-          continue;
-        }
-        const playerPos = probe?.player;
-        const entityPos = probe?.entity;
-        if (
-          !playerPos ||
-          !entityPos ||
-          !Number.isFinite(playerPos.x) ||
-          !Number.isFinite(playerPos.y) ||
-          !Number.isFinite(entityPos.x) ||
-          !Number.isFinite(entityPos.y)
-        ) {
-          results.push({
-            x: Number(target.x),
-            y: Number(target.y),
-            ok: false,
-            error: "probe_failed",
-          });
-          continue;
-        }
-        const distance = Math.hypot(
-          entityPos.x - playerPos.x,
-          entityPos.y - playerPos.y,
-        );
-        const delayMs = walkDelayMs(distance);
-        if (delayMs > 0) {
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
-        }
-        const response = await rconCommand(
-          agentSetRecipeCommand([
-            { x: Number(target.x), y: Number(target.y), recipe: target.recipe },
-          ]),
-        );
-        const data = parseRconJson<any>(
-          response,
-          "RCON set-recipe returned invalid JSON",
-        );
-        const entry = data?.results?.[0];
-        if (!entry) {
-          results.push({
-            x: Number(target.x),
-            y: Number(target.y),
-            ok: false,
-            error: "set_recipe_failed",
-          });
-        } else {
-          results.push(entry);
-        }
-      }
+      const results = await actionController.setRecipeBatch(
+        trimmed.map((t) => ({
+          tile: { x: Number(t.x), y: Number(t.y) },
+          recipe: String(t.recipe),
+        })),
+      );
       return json(res, 200, {
         ok: true,
         data: { results },
@@ -2887,50 +2219,12 @@ async function handleApi(req: IncomingMessage, res: ServerResponse) {
       return json(res, 400, { error: "Missing target" });
     }
     try {
-      const probeResponse = await rconCommand(
-        agentEntityProbeCommand({ x: Number(to.x), y: Number(to.y) }),
-      );
-      const probe = parseRconJson<any>(
-        probeResponse,
-        "RCON probe returned invalid JSON",
-      );
-      if (probe?.error) {
-        return json(res, 200, {
-          ok: true,
-          data: { ok: false, error: probe.error },
-        });
-      }
-      const playerPos = probe?.player;
-      const entityPos = probe?.entity;
-      if (
-        !playerPos ||
-        !entityPos ||
-        !Number.isFinite(playerPos.x) ||
-        !Number.isFinite(playerPos.y) ||
-        !Number.isFinite(entityPos.x) ||
-        !Number.isFinite(entityPos.y)
-      ) {
-        return json(res, 200, {
-          ok: true,
-          data: { ok: false, error: "probe_failed" },
-        });
-      }
-      const distance = Math.hypot(
-        entityPos.x - playerPos.x,
-        entityPos.y - playerPos.y,
-      );
-      const delayMs = walkDelayMs(distance);
-      if (delayMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-      }
-      const response = await rconCommand(
-        agentInsertCommand({ x: Number(to.x), y: Number(to.y), item, count }),
-      );
-      const data = parseRconJson<any>(
-        response,
-        "RCON insert returned invalid JSON",
-      );
-      return json(res, 200, { ok: true, data });
+      const result = await actionController.insert({
+        entity: { x: Number(to.x), y: Number(to.y) },
+        item,
+        count,
+      });
+      return json(res, 200, { ok: true, data: result });
     } catch (err: any) {
       return json(res, 500, { error: err?.message || "RCON command failed" });
     }
@@ -2963,55 +2257,12 @@ async function handleApi(req: IncomingMessage, res: ServerResponse) {
       return json(res, 400, { error: "Missing target" });
     }
     try {
-      const probeResponse = await rconCommand(
-        agentEntityProbeCommand({ x: Number(from.x), y: Number(from.y) }),
-      );
-      const probe = parseRconJson<any>(
-        probeResponse,
-        "RCON probe returned invalid JSON",
-      );
-      if (probe?.error) {
-        return json(res, 200, {
-          ok: true,
-          data: { ok: false, error: probe.error },
-        });
-      }
-      const playerPos = probe?.player;
-      const entityPos = probe?.entity;
-      if (
-        !playerPos ||
-        !entityPos ||
-        !Number.isFinite(playerPos.x) ||
-        !Number.isFinite(playerPos.y) ||
-        !Number.isFinite(entityPos.x) ||
-        !Number.isFinite(entityPos.y)
-      ) {
-        return json(res, 200, {
-          ok: true,
-          data: { ok: false, error: "probe_failed" },
-        });
-      }
-      const distance = Math.hypot(
-        entityPos.x - playerPos.x,
-        entityPos.y - playerPos.y,
-      );
-      const delayMs = walkDelayMs(distance);
-      if (delayMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-      }
-      const response = await rconCommand(
-        agentExtractCommand({
-          x: Number(from.x),
-          y: Number(from.y),
-          item,
-          count,
-        }),
-      );
-      const data = parseRconJson<any>(
-        response,
-        "RCON extract returned invalid JSON",
-      );
-      return json(res, 200, { ok: true, data });
+      const result = await actionController.extract({
+        entity: { x: Number(from.x), y: Number(from.y) },
+        item,
+        count,
+      });
+      return json(res, 200, { ok: true, data: result });
     } catch (err: any) {
       return json(res, 500, { error: err?.message || "RCON command failed" });
     }
