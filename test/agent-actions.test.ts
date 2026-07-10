@@ -7,6 +7,7 @@ import {
   rotateBox,
   type ActionAdapter,
   type Box,
+  type BuildRequest,
 } from "../src/agent-actions.js";
 
 test("rotateBox rotates a rectangular footprint for east-facing placement", () => {
@@ -115,4 +116,76 @@ test("approachEntity tries the next clear candidate after a block", async () => 
   assert.equal(result.ok, true);
   assert.equal(result.attempts.length, 2);
   assert.deepEqual(result.chosen, result.attempts[1].candidate);
+});
+
+test("buildBatch continues after a missing item", async () => {
+  const adapter = {
+    async probePlayer() {
+      return {
+        connected: true,
+        hasCharacter: true,
+        surface: 1,
+        controllerType: 1,
+        position: { x: 5, y: 5 },
+        reach: 5,
+      };
+    },
+    async isCharacterClear() {
+      return true;
+    },
+    async canReachBuild() {
+      return true;
+    },
+    async walkToPoint(target) {
+      return {
+        ok: true,
+        reached: true,
+        blocked: false,
+        position: target,
+        target,
+        distanceRemaining: 0,
+        elapsedMs: 1,
+        steps: 1,
+      };
+    },
+    async probeBuild(request: BuildRequest) {
+      return {
+        requestedTile: { x: request.x, y: request.y },
+        name: request.name,
+        direction: request.direction,
+        footprint: { left: request.x, top: request.y, right: request.x + 1, bottom: request.y + 1 },
+        itemCount: request.name === "missing" ? 0 : 1,
+        surfacePlaceable: true,
+      };
+    },
+    async build(request: BuildRequest) {
+      return {
+        ok: true,
+        requestedTile: { x: request.x, y: request.y },
+        actualPosition: { x: request.x + 0.5, y: request.y + 0.5 },
+        collisionBox: { left: request.x, top: request.y, right: request.x + 1, bottom: request.y + 1 },
+        direction: request.direction,
+        consumed: 1,
+        cursorRestored: true,
+      };
+    },
+    async verifyBuild(request: BuildRequest) {
+      return {
+        ok: true,
+        requestedTile: { x: request.x, y: request.y },
+        actualPosition: { x: request.x + 0.5, y: request.y + 0.5 },
+        collisionBox: { left: request.x, top: request.y, right: request.x + 1, bottom: request.y + 1 },
+        direction: request.direction,
+        consumed: 1,
+        cursorRestored: true,
+      };
+    },
+  } as ActionAdapter;
+  const controller = new AgentActionController(adapter);
+  const results = await controller.buildBatch([
+    { name: "missing", x: 1, y: 1, direction: 0 },
+    { name: "stone-furnace", x: 2, y: 2, direction: 0 },
+  ]);
+  assert.equal(results[0].error, "missing_item");
+  assert.equal(results[1].ok, true);
 });

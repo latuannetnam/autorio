@@ -137,6 +137,20 @@ export type BuildProbe = {
   error?: ActionError;
 };
 
+export type BuildRequest = { name: string; x: number; y: number; direction: number };
+
+export type BuildOperationResult = {
+  ok: boolean;
+  requestedTile: TilePoint;
+  actualPosition: Point | null;
+  collisionBox: Box | null;
+  direction: number | null;
+  consumed: number;
+  cursorRestored: boolean;
+  error?: ActionError;
+  detail?: string;
+};
+
 export interface ActionAdapter {
   walkToPoint(target: Point): Promise<WalkResult>;
   probePlayer(): Promise<PlayerSnapshot>;
@@ -145,6 +159,8 @@ export interface ActionAdapter {
   isCharacterClear(point: Point): Promise<boolean>;
   canReachEntity(entity: EntityRef): Promise<boolean>;
   canReachBuild(probe: BuildProbe): Promise<boolean>;
+  build(request: BuildRequest): Promise<BuildOperationResult>;
+  verifyBuild(request: BuildRequest): Promise<BuildOperationResult>;
 }
 
 export class AgentActionController {
@@ -239,5 +255,45 @@ export class AgentActionController {
       attempts,
       error: attempts.some((attempt) => attempt.error === "out_of_reach") ? "out_of_reach" : "blocked",
     };
+  }
+
+  async buildBatch(requests: BuildRequest[]): Promise<BuildOperationResult[]> {
+    return this.runExclusive(async () => {
+      const results: BuildOperationResult[] = [];
+      for (const request of requests) {
+        const result = await this.runOneBuild(request);
+        results.push(result);
+      }
+      return results;
+    });
+  }
+
+  private async runOneBuild(request: BuildRequest): Promise<BuildOperationResult> {
+    const base: BuildOperationResult = {
+      ok: false,
+      requestedTile: { x: request.x, y: request.y },
+      actualPosition: null,
+      collisionBox: null,
+      direction: null,
+      consumed: 0,
+      cursorRestored: false,
+    };
+    const probe = await this.adapter.probeBuild(request);
+    if (probe.error) return { ...base, error: probe.error };
+    if (probe.itemCount < 1) return { ...base, error: "missing_item" };
+    if (!probe.surfacePlaceable) return { ...base, error: "collision" };
+    const approach = await this.approachBuild(probe);
+    if (!approach.ok) {
+      return {
+        ...base,
+        error: approach.error ?? "out_of_reach",
+        detail: approach.attempts.length > 0 ? `${approach.attempts.length} candidates` : undefined,
+      };
+    }
+    const built = await this.adapter.build(request);
+    if (!built.ok) return { ...base, error: built.error, detail: built.detail, cursorRestored: built.cursorRestored };
+    const verify = await this.adapter.verifyBuild(request);
+    if (!verify.ok) return { ...base, ...built, error: verify.error, detail: verify.detail };
+    return { ...base, ...built, ok: true };
   }
 }

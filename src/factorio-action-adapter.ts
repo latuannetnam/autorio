@@ -1,6 +1,8 @@
 import type {
   ActionAdapter,
+  BuildOperationResult,
   BuildProbe,
+  BuildRequest,
   EntityRef,
   PlayerSnapshot,
   Point,
@@ -206,6 +208,154 @@ export function buildReachCommand(probe: BuildProbe): string {
   ].join("\n");
 }
 
+export function buildCommand(request: BuildRequest): string {
+  const name = luaString(request.name);
+  const x = luaNumber(request.x);
+  const y = luaNumber(request.y);
+  const direction = luaNumber(request.direction);
+  return [
+    "(function()",
+    "  local player = game.get_player(1) or (game.connected_players and game.connected_players[1])",
+    "  if not player or not player.character then",
+    "    rcon.print('{\"ok\":false,\"error\":\"no_character\"}')",
+    "    return",
+    "  end",
+    `  local entity_name = ${name}`,
+    `  local requested_tile = {x = ${x}, y = ${y}}`,
+    `  local build_direction = ${direction}`,
+    "  local proto = prototypes.entity[entity_name]",
+    "  if not proto then",
+    "    rcon.print('{\"ok\":false,\"error\":\"invalid_target\"}')",
+    "    return",
+    "  end",
+    "  local item_name = (proto.place_result and proto.place_result.name) or entity_name",
+    "  if player.get_item_count(item_name) < 1 then",
+    "    rcon.print('{\"ok\":false,\"error\":\"missing_item\"}')",
+    "    return",
+    "  end",
+    "  local reach_ok = player.can_build_from_cursor{",
+    "    name = entity_name,",
+    "    position = requested_tile,",
+    "    direction = build_direction,",
+    "    force = player.force,",
+    "  }",
+    "  if not reach_ok then",
+    "    rcon.print('{\"ok\":false,\"error\":\"out_of_reach\"}')",
+    "    return",
+    "  end",
+    "  local temp = game.create_inventory(1)",
+    "  local cleanup = function()",
+    "    if temp and temp.valid then",
+    "      local leftover = temp.get_contents()",
+    "      for n, c in pairs(leftover) do",
+    "        if c > 0 then player.insert{name=n, count=c} end",
+    "      end",
+    "      temp.destroy()",
+    "    end",
+    "  end",
+    "  local cursor = player.cursor",
+    "  local had_cursor = cursor and cursor.valid and cursor.valid_for_read",
+    "  local ok, err = pcall(function()",
+    "    if had_cursor then",
+    "      temp.insert(cursor)",
+    "      player.clear_cursor()",
+    "    end",
+    "    player.remove_item{name=item_name, count=1}",
+    "    local inv = game.create_inventory(1)",
+    "    inv.insert{name=item_name, count=1}",
+    "    local stack = inv[1]",
+    "    inv.destroy()",
+    "    if player.cursor then player.clear_cursor() end",
+    "    cursor.swap_stack(stack)",
+    "    player.build_from_cursor{",
+    "      name = entity_name,",
+    "      position = requested_tile,",
+    "      direction = build_direction,",
+    "      force = player.force,",
+    "    }",
+    "  end)",
+    "  if not ok then",
+    "    cleanup()",
+    "    rcon.print(string.format('{\"ok\":false,\"error\":\"build_failed\",\"detail\":\"%s\"}', tostring(err)))",
+    "    return",
+    "  end",
+    "  local surface = player.surface",
+    "  local ents = surface.find_entities_filtered{area={{requested_tile.x-0.5, requested_tile.y-0.5}, {requested_tile.x+0.5, requested_tile.y+0.5}}}",
+    "  local placed = nil",
+    "  for _, e in ipairs(ents) do",
+    "    if e.name == entity_name and e.direction == build_direction then",
+    "      placed = e",
+    "      break",
+    "    end",
+    "  end",
+    "  local cursor_restored = true",
+    "  if had_cursor then",
+    "    local saved = temp[1]",
+    "    if saved and saved.valid_for_read then",
+    "      if player.cursor then player.clear_cursor() end",
+    "      cursor.swap_stack(saved)",
+    "      cursor_restored = player.cursor and player.cursor.valid_for_read and player.cursor.name == saved.name and player.cursor.count == saved.count",
+    "    end",
+    "  end",
+    "  if not cursor_restored then",
+    "    cleanup()",
+    "    rcon.print(string.format('{\"ok\":true,\"requested_tile\":{\"x\":%d,\"y\":%d},\"cursor_restored\":false,\"error\":\"cursor_restore_failed\"}', requested_tile.x, requested_tile.y))",
+    "    return",
+    "  end",
+    "  if not placed then",
+    "    cleanup()",
+    "    rcon.print(string.format('{\"ok\":false,\"error\":\"verification_failed\",\"requested_tile\":{\"x\":%d,\"y\":%d}}', requested_tile.x, requested_tile.y))",
+    "    return",
+    "  end",
+    "  local pos = placed.position",
+    "  local box = placed.collision_box or {left_top = {x=0, y=0}, right_bottom = {x=0, y=0}}",
+    "  local lt = box.left_top or {x=0, y=0}",
+    "  local rb = box.right_bottom or {x=0, y=0}",
+    "  cleanup()",
+    "  local data = string.format('{\"ok\":true,\"requested_tile\":{\"x\":%d,\"y\":%d},\"actual_position\":{\"x\":%s,\"y\":%s},\"collision_box\":{\"left\":%s,\"top\":%s,\"right\":%s,\"bottom\":%s},\"direction\":%d,\"consumed\":1,\"cursor_restored\":true}',",
+    "    requested_tile.x, requested_tile.y,",
+    "    tostring(pos.x), tostring(pos.y),",
+    "    tostring(lt.x), tostring(lt.y), tostring(rb.x), tostring(rb.y),",
+    "    placed.direction or 0)",
+    "  rcon.print(data)",
+    "end)()",
+  ].join("\n");
+}
+
+export function buildVerifyCommand(request: BuildRequest): string {
+  const name = luaString(request.name);
+  const x = luaNumber(request.x);
+  const y = luaNumber(request.y);
+  const direction = luaNumber(request.direction);
+  return [
+    "(function()",
+    "  local player = game.get_player(1) or (game.connected_players and game.connected_players[1])",
+    "  if not player or not player.character then rcon.print('null') return end",
+    `  local entity_name = ${name}`,
+    `  local requested_tile = {x = ${x}, y = ${y}}`,
+    `  local expected_direction = ${direction}`,
+    "  local surface = player.surface",
+    "  local ents = surface.find_entities_filtered{area={{requested_tile.x-0.5, requested_tile.y-0.5}, {requested_tile.x+0.5, requested_tile.y+0.5}}}",
+    "  local placed = nil",
+    "  for _, e in ipairs(ents) do",
+    "    if e.name == entity_name then placed = e break end",
+    "  end",
+    "  if not placed then rcon.print('null') return end",
+    "  if placed.direction ~= expected_direction then rcon.print('null') return end",
+    "  local pos = placed.position",
+    "  local box = placed.collision_box or {left_top = {x=0, y=0}, right_bottom = {x=0, y=0}}",
+    "  local lt = box.left_top or {x=0, y=0}",
+    "  local rb = box.right_bottom or {x=0, y=0}",
+    "  local data = string.format('{\"ok\":true,\"requested_tile\":{\"x\":%d,\"y\":%d},\"actual_position\":{\"x\":%s,\"y\":%s},\"collision_box\":{\"left\":%s,\"top\":%s,\"right\":%s,\"bottom\":%s},\"direction\":%d,\"consumed\":1,\"cursor_restored\":true}',",
+    "    requested_tile.x, requested_tile.y,",
+    "    tostring(pos.x), tostring(pos.y),",
+    "    tostring(lt.x), tostring(lt.y), tostring(rb.x), tostring(rb.y),",
+    "    placed.direction or 0)",
+    "  rcon.print(data)",
+    "end)()",
+  ].join("\n");
+}
+
 function parseJson<T>(response: string): T {
   const trimmed = response.trim();
   if (!trimmed) throw new Error("Empty RCON response");
@@ -282,5 +432,88 @@ export class FactorioActionAdapter implements ActionAdapter {
       await this.execute(buildReachCommand(probe)),
     );
     return raw.reachable === true;
+  }
+
+  async build(request: BuildRequest): Promise<BuildOperationResult> {
+    const base: BuildOperationResult = {
+      ok: false,
+      requestedTile: { x: request.x, y: request.y },
+      actualPosition: null,
+      collisionBox: null,
+      direction: null,
+      consumed: 0,
+      cursorRestored: false,
+    };
+    let raw: any;
+    try {
+      raw = parseJson<any>(await this.execute(buildCommand(request)));
+    } catch (err: any) {
+      return { ...base, error: "verification_failed", detail: err?.message };
+    }
+    if (!raw || raw.ok !== true) {
+      return {
+        ...base,
+        error: raw?.error || "verification_failed",
+        detail: raw?.detail,
+        cursorRestored: raw?.cursor_restored === true,
+      };
+    }
+    return {
+      ok: true,
+      requestedTile: raw.requested_tile || base.requestedTile,
+      actualPosition: raw.actual_position
+        ? { x: Number(raw.actual_position.x), y: Number(raw.actual_position.y) }
+        : null,
+      collisionBox: raw.collision_box
+        ? {
+            left: Number(raw.collision_box.left),
+            top: Number(raw.collision_box.top),
+            right: Number(raw.collision_box.right),
+            bottom: Number(raw.collision_box.bottom),
+          }
+        : null,
+      direction: raw.direction ?? null,
+      consumed: Number(raw.consumed ?? 0),
+      cursorRestored: raw.cursor_restored === true,
+    };
+  }
+
+  async verifyBuild(request: BuildRequest): Promise<BuildOperationResult> {
+    const base: BuildOperationResult = {
+      ok: false,
+      requestedTile: { x: request.x, y: request.y },
+      actualPosition: null,
+      collisionBox: null,
+      direction: null,
+      consumed: 0,
+      cursorRestored: false,
+    };
+    let raw: any;
+    try {
+      raw = parseJson<any>(await this.execute(buildVerifyCommand(request)));
+    } catch (err: any) {
+      return { ...base, error: "verification_failed", detail: err?.message };
+    }
+    if (!raw || raw.ok !== true) {
+      return { ...base, error: "verification_failed" };
+    }
+    return {
+      ok: true,
+      requestedTile: raw.requested_tile || base.requestedTile,
+      actualPosition: raw.actual_position
+        ? { x: Number(raw.actual_position.x), y: Number(raw.actual_position.y) }
+        : null,
+      collisionBox: raw.collision_box
+        ? {
+            left: Number(raw.collision_box.left),
+            top: Number(raw.collision_box.top),
+            right: Number(raw.collision_box.right),
+            bottom: Number(raw.collision_box.bottom),
+          }
+        : null,
+      direction: raw.direction ?? null,
+      consumed: Number(raw.consumed ?? 0),
+      cursorRestored: raw.cursor_restored === true,
+    };
   }
 }

@@ -800,138 +800,6 @@ function agentRecipesCommand(params: {
   return parts.join(" ");
 }
 
-function agentBuildCommand(
-  items: Array<{ name: string; x: number; y: number; direction?: number }>,
-): string {
-  const parts = [
-    "/sc",
-    "local s=game.surfaces[1]",
-    "local player=game.players[1]",
-    "local force=player and player.force or game.forces.player or game.forces[1]",
-    "local function esc(v)",
-    "if v==nil then return 'null' end",
-    "local t=type(v)",
-    'if t==\"string\" then',
-    "return '\"'..v:gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
-    'elseif t==\"number\" or t==\"boolean\" then',
-    "return tostring(v)",
-    "else",
-    "return '\"'..tostring(v):gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"')..'\"'",
-    "end",
-    "end",
-    "local results={}",
-    "local function move_near(x,y)",
-    "if not player or not player.character then return false,'no_character' end",
-    "local function is_too_close(pos)",
-    "if not pos then return true end",
-    "local dx=pos.x - x",
-    "local dy=pos.y - y",
-    "return (dx*dx + dy*dy) < 0.49",
-    "end",
-    "local safe_pos=s.find_non_colliding_position('character',{x=x,y=y},6,0.5)",
-    "if is_too_close(safe_pos) then",
-    "local offsets={{1.5,0},{-1.5,0},{0,1.5},{0,-1.5},{1.5,1.5},{-1.5,1.5},{1.5,-1.5},{-1.5,-1.5}}",
-    "for i=1,#offsets do",
-    "local off=offsets[i]",
-    "local candidate=s.find_non_colliding_position('character',{x=x+off[1],y=y+off[2]},6,0.5)",
-    "if not is_too_close(candidate) then",
-    "safe_pos=candidate",
-    "break",
-    "end",
-    "end",
-    "end",
-    "if safe_pos then player.teleport(safe_pos) return true end",
-    "return false,'out_of_reach'",
-    "end",
-    "local function place(name,x,y,dir)",
-    "if not player or not player.character then return {name=name,x=x,y=y,ok=false,error='no_character'} end",
-    "local moved,move_err=move_near(x,y)",
-    "if not moved then return {name=name,x=x,y=y,ok=false,error=move_err or 'out_of_reach'} end",
-    "local function take_item()",
-    "local removed=player.remove_item{name=name,count=1}",
-    "if removed < 1 then return 0,'missing_item' end",
-    "return removed,nil",
-    "end",
-    "local can_surface=s.can_place_entity{name=name,position={x=x,y=y},direction=dir,force=force}",
-    "local can_player=player.can_place_entity and player.can_place_entity{name=name,position={x=x,y=y},direction=dir,force=force} or can_surface",
-    "if not can_player then",
-    "if can_surface then",
-    "return {name=name,x=x,y=y,ok=false,error='out_of_reach',detail='Target is out of reach'}",
-    "end",
-    "local colliders=s.find_entities_filtered{area={{x-1,y-1},{x+2,y+2}}} or {}",
-    "local blocking=nil",
-    "local only_resources=true",
-    "for _,c in pairs(colliders) do",
-    "if c.valid then",
-    "if c.type ~= 'resource' then",
-    "only_resources=false",
-    "blocking={name=c.name,x=math.floor(c.position.x),y=math.floor(c.position.y)}",
-    "break",
-    "end",
-    "end",
-    "end",
-    "if only_resources then",
-    "local removed,remove_err=take_item()",
-    "if remove_err then return {name=name,x=x,y=y,ok=false,error=remove_err} end",
-    "local ok_res,created=pcall(function()",
-    "return s.create_entity{ name=name, position={x=x,y=y}, direction=dir, force=force }",
-    "end)",
-    "if ok_res and created then",
-    "return {name=name,x=x,y=y,ok=true,center_x=created.position.x,center_y=created.position.y,direction=created.direction}",
-    "elseif ok_res then",
-    "return {name=name,x=x,y=y,ok=true}",
-    "else",
-    "player.insert{name=name,count=removed}",
-    "return {name=name,x=x,y=y,ok=false,error='create_failed',detail=tostring(created)}",
-    "end",
-    "end",
-    "local tile=s.get_tile(x,y)",
-    "local tile_name=tile and tile.name or 'unknown'",
-    "if blocking then",
-    "return {name=name,x=x,y=y,ok=false,error='collision',detail='Blocked by '..blocking.name..' at '..blocking.x..','..blocking.y,blocking_entity=blocking}",
-    "else",
-    "return {name=name,x=x,y=y,ok=false,error='invalid_position',tile=tile_name,detail='Cannot place on '..tile_name}",
-    "end",
-    "end",
-    "local removed,remove_err=take_item()",
-    "if remove_err then return {name=name,x=x,y=y,ok=false,error=remove_err} end",
-    "local ok,result=pcall(function()",
-    "return s.create_entity{ name=name, position={x=x,y=y}, direction=dir, force=force }",
-    "end)",
-    "if ok and result then return {name=name,x=x,y=y,ok=true,center_x=result.position.x,center_y=result.position.y,direction=result.direction} end",
-    "if ok then return {name=name,x=x,y=y,ok=true} end",
-    "player.insert{name=name,count=removed}",
-    "return {name=name,x=x,y=y,ok=false,error='create_failed',detail=tostring(result)}",
-    "end",
-  ];
-  for (const item of items) {
-    const dir = item.direction ?? 0;
-    parts.push(
-      `table.insert(results,place(${luaString(item.name)},${item.x},${item.y},${dir}))`,
-    );
-  }
-  parts.push(
-    "local out={}",
-    "for i=1,#results do",
-    "local r=results[i]",
-    "local entry='{\"name\":'..esc(r.name)..',\"x\":'..r.x..',\"y\":'..r.y..',\"ok\":'..tostring(r.ok)",
-    "if r.error then entry=entry..',\"error\":'..esc(r.error) end",
-    "if r.detail then entry=entry..',\"detail\":'..esc(r.detail) end",
-    "if r.tile then entry=entry..',\"tile\":'..esc(r.tile) end",
-    "if r.blocking_entity then",
-    "entry=entry..',\"blocking_entity\":{\"name\":'..esc(r.blocking_entity.name)..',\"x\":'..r.blocking_entity.x..',\"y\":'..r.blocking_entity.y..'}'",
-    "end",
-    "if r.center_x then entry=entry..',\"center_x\":'..esc(r.center_x)..',\"center_y\":'..esc(r.center_y) end",
-    "if r.direction then entry=entry..',\"direction\":'..esc(r.direction) end",
-    "entry=entry..'}'",
-    "table.insert(out,entry)",
-    "end",
-    "local results_json='['..table.concat(out,',')..']'",
-    "rcon.print('{\"results\":'..results_json..'}')",
-  );
-  return parts.join(" ");
-}
-
 function agentMineCommand(targets: Array<{ x: number; y: number }>): string {
   const parts = [
     "/sc",
@@ -2468,63 +2336,14 @@ async function handleApi(req: IncomingMessage, res: ServerResponse) {
       .slice(0, max)
       .filter((e) => e?.name && e?.x !== undefined && e?.y !== undefined);
     try {
-      const results: any[] = [];
-      for (const entity of trimmed) {
-        const probeResponse = await rconCommand(agentPlayerPositionCommand());
-        const probe = parseRconJson<any>(
-          probeResponse,
-          "RCON probe returned invalid JSON",
-        );
-        if (probe?.error) {
-          results.push({
-            name: entity?.name,
-            x: Number(entity.x),
-            y: Number(entity.y),
-            ok: false,
-            error: probe.error,
-          });
-          continue;
-        }
-        const playerPos = probe?.player;
-        if (
-          !playerPos ||
-          !Number.isFinite(playerPos.x) ||
-          !Number.isFinite(playerPos.y)
-        ) {
-          results.push({
-            name: entity?.name,
-            x: Number(entity.x),
-            y: Number(entity.y),
-            ok: false,
-            error: "probe_failed",
-          });
-          continue;
-        }
-        const targetX = Number(entity.x) + 0.5;
-        const targetY = Number(entity.y) + 0.5;
-        const distance = Math.hypot(targetX - playerPos.x, targetY - playerPos.y);
-        const delayMs = walkDelayMs(distance);
-        if (delayMs > 0) {
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
-        }
-        const response = await rconCommand(agentBuildCommand([entity]));
-        const data = parseRconJson<any>(
-          response,
-          "RCON build returned invalid JSON",
-        );
-        const entry = data?.results?.[0];
-        if (!entry) {
-          results.push({
-            name: entity?.name,
-            x: Number(entity.x),
-            y: Number(entity.y),
-            ok: false,
-            error: "build_failed",
-          });
-        } else {
-          results.push(entry);
-        }
-      }
+      const results = await actionController.buildBatch(
+        trimmed.map((entity) => ({
+          name: String(entity.name),
+          x: Number(entity.x),
+          y: Number(entity.y),
+          direction: Number(entity.direction ?? 0),
+        })),
+      );
       return json(res, 200, {
         ok: true,
         data: { results },
